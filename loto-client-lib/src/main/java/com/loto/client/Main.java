@@ -34,6 +34,7 @@ public class Main {
         int     port       = 9000;
         String  name       = null;
         boolean autoClaim  = false;
+        boolean useWs       = false;
 
         // ── Parse args ────────────────────────────────────────────
         for (int i = 0; i < args.length; i++) {
@@ -42,6 +43,7 @@ public class Main {
                 case "--port":        port      = Integer.parseInt(args[++i]); break;
                 case "--name":        name      = args[++i]; break;
                 case "--auto-claim":  autoClaim = true; break;
+                case "--ws":          useWs     = true; break;
             }
         }
 
@@ -51,17 +53,18 @@ public class Main {
             System.exit(1);
         }
 
-        printBanner(host, port, name, autoClaim);
+        printBanner(host, port, name, autoClaim, useWs);
 
         client = new LotoClient.Builder()
-                .host(host)
-                .port(port)
-                .playerName(name)
-                .autoReconnect(true)
-                .reconnectDelayMs(3_000)
-                .autoClaimOnWin(autoClaim)
-                .callback(new ConsoleCallback())
-                .build();
+            .host(host)
+            .port(port)
+            .useWebSocket(useWs)
+            .playerName(name)
+            .autoReconnect(true)
+            .reconnectDelayMs(3_000)
+            .autoClaimOnWin(autoClaim)
+            .callback(new ConsoleCallback())
+            .build();
 
         // Connect on background thread
         Thread connectThread = new Thread(client::connect, "loto-client-connect");
@@ -197,13 +200,19 @@ public class Main {
         System.out.println("  Drawn   : " + client.getDrawnNumbers().size() + " / 90");
     }
 
-    private static void printBanner(String host, int port, String name, boolean autoClaim) {
+    private static void printBanner(String host, int port, String name, boolean autoClaim, boolean ws) {
         System.out.println("╔══════════════════════════════════════╗");
         System.out.println("║           LOTO CLIENT                ║");
         System.out.println("╠══════════════════════════════════════╣");
-        System.out.printf ("║  Server     : %-22s║%n", host + ":" + port);
-        System.out.printf ("║  Name       : %-22s║%n", name);
-        System.out.printf ("║  Auto-claim : %-22s║%n", autoClaim ? "BẬT" : "TẮT");
+
+        System.out.printf("║  Protocol   : %-22s║%n", ws ? "WebSocket" : "TCP");
+
+        String server = ws ? host : host + ":" + port;
+        System.out.printf("║  Server     : %-22s║%n", server);
+
+        System.out.printf("║  Name       : %-22s║%n", name);
+        System.out.printf("║  Auto-claim : %-22s║%n", autoClaim ? "BẬT" : "TẮT");
+
         System.out.println("╠══════════════════════════════════════╣");
         System.out.println("║  Type 'help' for commands            ║");
         System.out.println("╚══════════════════════════════════════╝");

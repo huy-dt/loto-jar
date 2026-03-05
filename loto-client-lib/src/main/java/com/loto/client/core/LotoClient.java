@@ -41,6 +41,7 @@ public class LotoClient {
     private final int                  reconnectDelayMs;
     private final int                  maxReconnectAttempts;
     private final boolean              autoClaimOnWin;
+    private final boolean              useWebSocket;
     private final LotoClientCallback   callback;
 
     // ── State ─────────────────────────────────────────────────────
@@ -63,6 +64,7 @@ public class LotoClient {
     private LotoClient(Builder b) {
         this.host                 = b.host;
         this.port                 = b.port;
+        this.useWebSocket         = b.useWebSocket;
         this.playerName           = b.playerName;
         this.autoReconnect        = b.autoReconnect;
         this.reconnectDelayMs     = b.reconnectDelayMs;
@@ -469,6 +471,12 @@ public class LotoClient {
         private int                  maxReconnectAttempts = 0;     // 0 = infinite
         private boolean              autoClaimOnWin       = false;
         private LotoClientCallback   callback;
+
+        private boolean useWebSocket = false;
+        public Builder useWebSocket(boolean v) {
+            this.useWebSocket = v;
+            return this;
+        }
 
         /** Server host / IP. Default: localhost */
         public Builder host(String host)                         { this.host = host; return this; }
