@@ -1,0 +1,15 @@
+package com.loto.core;
+
+public enum GameState {
+    /** Room created, waiting for players to join and buy pages. */
+    WAITING,
+
+    /** Players are voting to start. */
+    VOTING,
+
+    /** Numbers are being drawn. */
+    PLAYING,
+
+    /** A winner has been confirmed, game over. */
+    ENDED
+}
