@@ -159,11 +159,13 @@ public class GameRoomPlayerManager {
 
         if (s.callback != null) s.callback.onPlayerLeft(player, false);
 
+        // Ẩn countdown ngay nếu player disconnect (pages vẫn còn nhưng isConnected=false)
+        room.checkAutoStart();
+
         s.scheduler.schedule(() -> {
             if (!player.isConnected()) {
                 s.playersByToken.remove(player.getToken());
                 if (s.callback != null) s.callback.onPlayerLeft(player, true);
-                // Player left — cancel auto-start countdown if below threshold
                 room.checkAutoStart();
             }
         }, s.config.reconnectTimeoutMs, TimeUnit.MILLISECONDS);

@@ -38,7 +38,7 @@ public class GameRoomGameFlow {
         if (s.state == GameState.PLAYING || s.state == GameState.ENDED || s.state == GameState.PAUSED) return;
 
         boolean hasRealBuyer = s.playersByToken.values().stream()
-                .anyMatch(p -> !p.isBot() && !p.getPages().isEmpty());
+                .anyMatch(p -> !p.isBot() && p.isConnected() && !p.getPages().isEmpty());
 
         if (hasRealBuyer) {
             if (s.autoStartTask == null || s.autoStartTask.isDone()) {
@@ -59,7 +59,7 @@ public class GameRoomGameFlow {
             synchronized (GameRoomGameFlow.this) {
                 if (s.state == GameState.WAITING || s.state == GameState.VOTING) {
                     boolean hasRealBuyer = s.playersByToken.values().stream()
-                            .anyMatch(p -> !p.isBot() && !p.getPages().isEmpty());
+                            .anyMatch(p -> !p.isBot() && p.isConnected() && !p.getPages().isEmpty());
                     if (hasRealBuyer) {
                         startGame();
                     }
@@ -72,10 +72,11 @@ public class GameRoomGameFlow {
     public synchronized void cancelAutoStart() {
         if (s.autoStartTask != null && !s.autoStartTask.isDone()) {
             s.autoStartTask.cancel(false);
-            s.autoStartTask = null;
-            bc.broadcast(OutboundMsg.autoStartScheduled(0).toJson(), null);
-            System.out.println("[GameRoom] Auto-start cancelled.");
         }
+        s.autoStartTask = null;
+        bc.broadcast(OutboundMsg.autoStartScheduled(0).toJson(), null);
+        if (s.callback != null) s.callback.onAutoStartScheduled(0);
+        System.out.println("[GameRoom] Auto-start cancelled.");
     }
 
     /**
@@ -367,7 +368,7 @@ public class GameRoomGameFlow {
 
         // Nếu đã có người thật mua tờ (bất kể state) → lưu pending, áp dụng ván sau
         boolean realPlayerBought = s.playersByToken.values().stream()
-                .anyMatch(p -> !p.isBot() && !p.getPages().isEmpty());
+                .anyMatch(p -> !p.isBot() && p.isConnected() && !p.getPages().isEmpty());
 
         if (realPlayerBought || s.state == GameState.PLAYING || s.state == GameState.PAUSED) {
             s.pendingPricePerPage = newPrice;
@@ -421,8 +422,10 @@ public class GameRoomGameFlow {
     public synchronized void cancelAutoReset() {
         if (s.autoResetTask != null && !s.autoResetTask.isDone()) {
             s.autoResetTask.cancel(false);
-            s.autoResetTask = null;
         }
+        s.autoResetTask = null;
+        bc.broadcast(OutboundMsg.autoResetScheduled(0).toJson(), null);
+        if (s.callback != null) s.callback.onAutoResetScheduled(0);
     }
 
     // ─── Internal helpers ─────────────────────────────────────────
