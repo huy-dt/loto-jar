@@ -1,1 +1,1 @@
-java -jar loto-client-1.0.0.jar --ws --port 8001 --name admin
+java -jar loto-client-2.0.0.jar --ws --port 8001 --name admin

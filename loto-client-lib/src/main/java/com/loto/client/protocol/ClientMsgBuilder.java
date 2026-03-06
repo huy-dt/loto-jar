@@ -109,6 +109,14 @@ public class ClientMsgBuilder {
         return msg("SET_AUTO_RESET", new JSONObject().put("delayMs", delayMs));
     }
 
+    /**
+     * Set auto-start delay (host only).
+     * @param delayMs milliseconds (0 = disable auto-start)
+     */
+    public static String setAutoStart(int delayMs) {
+        return msg("SET_AUTO_START", new JSONObject().put("delayMs", delayMs));
+    }
+
     // ── Helper ────────────────────────────────────────────────────
 
     private static String msg(String type, JSONObject payload) {

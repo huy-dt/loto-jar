@@ -113,13 +113,16 @@ public class AndroidLotoClient {
     public void setDrawInterval(int ms)                          { client.setDrawInterval(ms); }
     public void setPricePerPage(long price)                      { client.setPricePerPage(price); }
     public void setAutoReset(int delayMs)                        { client.setAutoReset(delayMs); }
+    public void setAutoStart(int delayMs)                        { client.setAutoStart(delayMs); }
 
     public com.loto.client.core.ClientState getState()           { return client.getState(); }
     public String           getPlayerId()                        { return client.getPlayerId(); }
     public boolean          isHost()                             { return client.isHost(); }
     public int              getCurrentDrawIntervalMs()           { return client.getCurrentDrawIntervalMs(); }
     public long             getCurrentPricePerPage()             { return client.getCurrentPricePerPage(); }
+    public long             getPendingPricePerPage()             { return client.getPendingPricePerPage(); }
     public int              getCurrentAutoResetDelayMs()         { return client.getCurrentAutoResetDelayMs(); }
+    public int              getCurrentAutoStartDelayMs()         { return client.getCurrentAutoStartDelayMs(); }
     public List<ClientPage> getPages()                           { return client.getPages(); }
     public List<Integer>    getDrawnNumbers()                    { return client.getDrawnNumbers(); }
     public WalletInfo       getWallet()                          { return client.getWallet(); }
@@ -156,6 +159,9 @@ public class AndroidLotoClient {
         @Override public void onDrawIntervalChanged(int ms)                    { ui(() -> delegate.onDrawIntervalChanged(ms)); }
         @Override public void onPricePerPageChanged(long price)                { ui(() -> delegate.onPricePerPageChanged(price)); }
         @Override public void onAutoResetScheduled(int delayMs)               { ui(() -> delegate.onAutoResetScheduled(delayMs)); }
+        @Override public void onAutoStartScheduled(int delayMs)               { ui(() -> delegate.onAutoStartScheduled(delayMs)); }
+        @Override public void onGamePaused()                                   { ui(() -> delegate.onGamePaused()); }
+        @Override public void onGameResumed()                                  { ui(() -> delegate.onGameResumed()); }
         @Override public void onNumberDrawn(int n, List<Integer> drawn,
                                             List<ClientPage> marked,
                                             List<ClientPage> won)              { ui(() -> delegate.onNumberDrawn(n, drawn, marked, won)); }

@@ -393,6 +393,14 @@ public class Main {
             else
                 System.out.println("[⏱] Auto-reset đã tắt");
         }
+        @Override public void onAutoStartScheduled(int delayMs) {
+            if (delayMs > 0)
+                System.out.printf("[🚀] Auto-start sau %d giây%n", delayMs / 1000);
+            else
+                System.out.println("[🚀] Auto-start đã huỷ");
+        }
+        @Override public void onGamePaused()  { System.out.println("[⏸] Game tạm dừng"); }
+        @Override public void onGameResumed() { System.out.println("[▶] Game tiếp tục"); }
         @Override public void onNumberDrawn(int number, List<Integer> drawn,
                                             List<ClientPage> markedPages, List<ClientPage> wonPages) {
             System.out.printf("[#] Số: %-3d  (%d/90)", number, drawn.size());

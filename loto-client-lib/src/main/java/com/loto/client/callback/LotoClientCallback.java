@@ -69,6 +69,18 @@ public interface LotoClientCallback {
     void onAutoResetScheduled(int delayMs);
 
     /**
+     * Auto-start was scheduled or cancelled.
+     * @param delayMs ms until game auto-starts (0 = cancelled / disabled)
+     */
+    void onAutoStartScheduled(int delayMs);
+
+    /** Game was paused by host. */
+    void onGamePaused();
+
+    /** Game was resumed by host. */
+    void onGameResumed();
+
+    /**
      * A number was drawn.
      * @param number      number just drawn
      * @param drawnSoFar  all numbers drawn so far
