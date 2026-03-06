@@ -3,17 +3,28 @@ package com.loto.client.protocol;
 import org.json.JSONObject;
 
 /**
- * Builds newline-delimited JSON messages from client → server.
+ * Builds newline-delimited JSON messages: client → server.
  */
 public class ClientMsgBuilder {
+
+    // ── Join ──────────────────────────────────────────────────────
 
     public static String join(String name) {
         return msg("JOIN", new JSONObject().put("name", name));
     }
 
+    /** Multi-room mode: include roomId in JOIN. */
+    public static String join(String name, String roomId) {
+        JSONObject p = new JSONObject().put("name", name);
+        if (roomId != null) p.put("roomId", roomId);
+        return msg("JOIN", p);
+    }
+
     public static String reconnect(String token) {
         return msg("RECONNECT", new JSONObject().put("token", token));
     }
+
+    // ── Player actions ────────────────────────────────────────────
 
     public static String buyPage(int count) {
         return msg("BUY_PAGE", new JSONObject().put("count", count));
@@ -55,6 +66,30 @@ public class ClientMsgBuilder {
 
     public static String cancelGame(String reason) {
         return msg("CANCEL_GAME", new JSONObject().put("reason", reason));
+    }
+
+    public static String kick(String playerId, String reason) {
+        JSONObject p = new JSONObject().put("playerId", playerId);
+        if (reason != null) p.put("reason", reason);
+        return msg("KICK", p);
+    }
+
+    public static String ban(String playerId, String reason) {
+        JSONObject p = new JSONObject().put("playerId", playerId);
+        if (reason != null) p.put("reason", reason);
+        return msg("BAN", p);
+    }
+
+    public static String unban(String name) {
+        return msg("UNBAN", new JSONObject().put("name", name));
+    }
+
+    /**
+     * Change draw speed live (host only).
+     * @param intervalMs milliseconds between numbers (min 200)
+     */
+    public static String setDrawInterval(int intervalMs) {
+        return msg("SET_DRAW_INTERVAL", new JSONObject().put("intervalMs", intervalMs));
     }
 
     // ── Helper ────────────────────────────────────────────────────

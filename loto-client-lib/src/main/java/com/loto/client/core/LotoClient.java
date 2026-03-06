@@ -5,66 +5,77 @@ import com.loto.client.model.ClientPage;
 import com.loto.client.model.RoomPlayer;
 import com.loto.client.model.WalletInfo;
 import com.loto.client.model.WalletInfo.TxRecord;
+import com.loto.client.network.IConnection;
 import com.loto.client.network.TcpConnection;
+import com.loto.client.network.WebSocketConnection;
 import com.loto.client.protocol.ClientMsgBuilder;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.*;
 
 /**
- * Client entry point for the Loto server library.
+ * Main client entry point.
  *
  * <pre>
+ * // TCP
  * LotoClient client = new LotoClient.Builder()
- *         .host("192.168.1.10")
- *         .port(9000)
+ *         .host("192.168.1.10").port(9000)
  *         .playerName("Nguyen")
- *         .autoReconnect(true)
- *         .autoClaimOnWin(true)
- *         .callback(myCallback)
- *         .build();
+ *         .autoReconnect(true).autoClaimOnWin(true)
+ *         .callback(myCallback).build();
+ *
+ * // WebSocket
+ * LotoClient client = new LotoClient.Builder()
+ *         .wsUrl("ws://192.168.1.10:9001")
+ *         .playerName("Nguyen")
+ *         .callback(myCallback).build();
  *
  * new Thread(client::connect).start();
  * </pre>
+ *
+ * <p><b>Android:</b> call {@code connect()} on a background thread (e.g. via
+ * {@code Executors.newSingleThreadExecutor()}). All callbacks fire on the
+ * network thread — marshal to UI thread with {@code runOnUiThread()} as needed.
  */
 public class LotoClient {
 
     // ── Config ────────────────────────────────────────────────────
     private final String               host;
     private final int                  port;
+    private final String               wsUrl;          // null = TCP mode
+    private final String               roomId;         // null = single-room server
     private final String               playerName;
     private final boolean              autoReconnect;
     private final int                  reconnectDelayMs;
     private final int                  maxReconnectAttempts;
     private final boolean              autoClaimOnWin;
-    private final boolean              useWebSocket;
     private final LotoClientCallback   callback;
 
     // ── State ─────────────────────────────────────────────────────
     private volatile ClientState       state        = ClientState.DISCONNECTED;
     private volatile String            playerId;
-    private volatile String            token;        // persisted for reconnect
+    private volatile String            token;
     private volatile boolean           isHost;
+    private volatile int               currentDrawIntervalMs;
 
     private final List<ClientPage>     pages        = new CopyOnWriteArrayList<>();
     private final List<Integer>        drawnNumbers = new CopyOnWriteArrayList<>();
     private final WalletInfo           wallet       = new WalletInfo(0);
 
     // ── Network ───────────────────────────────────────────────────
-    private volatile TcpConnection     connection;
-    private final ExecutorService      executor     = Executors.newCachedThreadPool();
-    private volatile boolean           running      = false;
+    private volatile IConnection       connection;
+    private volatile boolean           running = false;
 
-    // ── Constructor (use Builder) ─────────────────────────────────
+    // ── Constructor ───────────────────────────────────────────────
 
     private LotoClient(Builder b) {
         this.host                 = b.host;
         this.port                 = b.port;
-        this.useWebSocket         = b.useWebSocket;
+        this.wsUrl                = b.wsUrl;
+        this.roomId               = b.roomId;
         this.playerName           = b.playerName;
         this.autoReconnect        = b.autoReconnect;
         this.reconnectDelayMs     = b.reconnectDelayMs;
@@ -76,7 +87,8 @@ public class LotoClient {
     // ── Lifecycle ─────────────────────────────────────────────────
 
     /**
-     * Connects to the server. Blocks on the read loop — run on a background thread.
+     * Connects to the server and blocks on the read loop.
+     * Run this on a background thread.
      */
     public void connect() {
         running = true;
@@ -87,37 +99,34 @@ public class LotoClient {
             setState(ClientState.CONNECTING);
 
             try {
-                TcpConnection conn = new TcpConnection(
-                        host, port,
-                        this::handleMessage,
-                        this::onConnectionDropped);
-
+                IConnection conn = buildConnection();
                 conn.connect();
                 connection = conn;
                 setState(ClientState.CONNECTED);
-
                 if (callback != null) callback.onConnected();
 
-                // Send JOIN or RECONNECT
+                // JOIN or RECONNECT
                 if (token != null) {
                     conn.send(ClientMsgBuilder.reconnect(token));
                 } else {
-                    conn.send(ClientMsgBuilder.join(playerName));
+                    conn.send(roomId != null
+                            ? ClientMsgBuilder.join(playerName, roomId)
+                            : ClientMsgBuilder.join(playerName));
                 }
 
-                attempts = 0; // reset on successful connect
-                conn.readLoop(); // blocks until disconnected
+                attempts = 0;
+                conn.readLoop();   // blocks until disconnected
 
-            } catch (IOException e) {
+            } catch (Exception e) {
                 setState(ClientState.DISCONNECTED);
                 boolean willRetry = autoReconnect
                         && (maxReconnectAttempts <= 0 || attempts < maxReconnectAttempts);
 
                 if (callback != null) callback.onDisconnected(willRetry);
-
                 if (!willRetry || !running) break;
 
-                try { Thread.sleep(reconnectDelayMs); } catch (InterruptedException ie) {
+                try { Thread.sleep(reconnectDelayMs); }
+                catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     break;
                 }
@@ -125,65 +134,68 @@ public class LotoClient {
         }
     }
 
-    /** Disconnects and stops auto-reconnect. */
     public void disconnect() {
         running = false;
         if (connection != null) connection.close();
-        executor.shutdownNow();
+    }
+
+    private IConnection buildConnection() {
+        if (wsUrl != null) {
+            return new WebSocketConnection(wsUrl, this::handleMessage, this::onConnectionDropped);
+        }
+        return new TcpConnection(host, port, this::handleMessage, this::onConnectionDropped);
     }
 
     private void onConnectionDropped() {
         setState(ClientState.DISCONNECTED);
-        // readLoop returning will trigger the reconnect loop in connect()
     }
 
-    // ── Public actions ────────────────────────────────────────────
+    // ── Public actions — all players ──────────────────────────────
 
-    public void buyPages(int count) {
-        send(ClientMsgBuilder.buyPage(count));
-    }
-
-    public void voteStart() {
-        send(ClientMsgBuilder.voteStart());
-    }
-
-    /** Sends a CLAIM_WIN for the given page. */
-    public void claimWin(int pageId) {
-        send(ClientMsgBuilder.claimWin(pageId));
-    }
-
-    public void requestWalletHistory() {
-        send(ClientMsgBuilder.getWallet());
-    }
+    public void buyPages(int count)        { send(ClientMsgBuilder.buyPage(count)); }
+    public void voteStart()                { send(ClientMsgBuilder.voteStart()); }
+    public void claimWin(int pageId)       { send(ClientMsgBuilder.claimWin(pageId)); }
+    public void requestWalletHistory()     { send(ClientMsgBuilder.getWallet()); }
 
     // ── Host-only actions ─────────────────────────────────────────
 
     public void confirmWin(String playerId, int pageId) {
         send(ClientMsgBuilder.confirmWin(playerId, pageId));
     }
-
     public void rejectWin(String playerId, int pageId) {
         send(ClientMsgBuilder.rejectWin(playerId, pageId));
     }
-
     public void topUp(String playerId, long amount, String note) {
         send(ClientMsgBuilder.topUp(playerId, amount, note));
     }
+    public void cancelGame(String reason)  { send(ClientMsgBuilder.cancelGame(reason)); }
+    public void kick(String playerId, String reason) {
+        send(ClientMsgBuilder.kick(playerId, reason));
+    }
+    public void ban(String playerId, String reason) {
+        send(ClientMsgBuilder.ban(playerId, reason));
+    }
+    public void unban(String name)         { send(ClientMsgBuilder.unban(name)); }
 
-    public void cancelGame(String reason) {
-        send(ClientMsgBuilder.cancelGame(reason));
+    /**
+     * Change draw speed live — host only.
+     * @param intervalMs milliseconds between numbers (min 200)
+     */
+    public void setDrawInterval(int intervalMs) {
+        send(ClientMsgBuilder.setDrawInterval(intervalMs));
     }
 
     // ── State accessors ───────────────────────────────────────────
 
-    public ClientState       getState()       { return state; }
-    public String            getPlayerId()    { return playerId; }
-    public boolean           isHost()         { return isHost; }
-    public List<ClientPage>  getPages()       { return Collections.unmodifiableList(pages); }
-    public List<Integer>     getDrawnNumbers(){ return Collections.unmodifiableList(drawnNumbers); }
-    public WalletInfo        getWallet()      { return wallet; }
+    public ClientState       getState()                  { return state; }
+    public String            getPlayerId()               { return playerId; }
+    public boolean           isHost()                    { return isHost; }
+    public int               getCurrentDrawIntervalMs()  { return currentDrawIntervalMs; }
+    public List<ClientPage>  getPages()                  { return Collections.unmodifiableList(pages); }
+    public List<Integer>     getDrawnNumbers()           { return Collections.unmodifiableList(drawnNumbers); }
+    public WalletInfo        getWallet()                 { return wallet; }
 
-    // ── Message handler ───────────────────────────────────────────
+    // ── Message dispatcher ────────────────────────────────────────
 
     private void handleMessage(String raw) {
         try {
@@ -193,15 +205,8 @@ public class LotoClient {
             if (payload == null) payload = new JSONObject();
 
             switch (type) {
-
-                case "WELCOME":
-                    handleWelcome(payload);
-                    break;
-
-                case "ROOM_UPDATE":
-                    handleRoomUpdate(payload);
-                    break;
-
+                case "WELCOME":              handleWelcome(payload);         break;
+                case "ROOM_UPDATE":          handleRoomUpdate(payload);      break;
                 case "PLAYER_JOINED":
                     if (callback != null)
                         callback.onPlayerJoined(
@@ -209,33 +214,27 @@ public class LotoClient {
                                 payload.getString("name"),
                                 payload.optBoolean("isHost", false));
                     break;
-
                 case "PLAYER_LEFT":
                     if (callback != null)
                         callback.onPlayerLeft(payload.getString("playerId"));
                     break;
-
-                case "PAGES_ASSIGNED":
-                    handlePagesAssigned(payload);
-                    break;
-
+                case "PAGES_ASSIGNED":       handlePagesAssigned(payload);   break;
                 case "VOTE_UPDATE":
                     if (callback != null)
                         callback.onVoteUpdate(
                                 payload.getInt("voteCount"),
                                 payload.getInt("needed"));
                     break;
-
                 case "GAME_STARTING":
+                    currentDrawIntervalMs = payload.optInt("drawIntervalMs", 5000);
                     setState(ClientState.IN_GAME);
-                    if (callback != null)
-                        callback.onGameStarting(payload.getInt("drawIntervalMs"));
+                    if (callback != null) callback.onGameStarting(currentDrawIntervalMs);
                     break;
-
-                case "NUMBER_DRAWN":
-                    handleNumberDrawn(payload);
+                case "DRAW_INTERVAL_CHANGED":
+                    currentDrawIntervalMs = payload.optInt("intervalMs", currentDrawIntervalMs);
+                    if (callback != null) callback.onDrawIntervalChanged(currentDrawIntervalMs);
                     break;
-
+                case "NUMBER_DRAWN":         handleNumberDrawn(payload);     break;
                 case "CLAIM_RECEIVED":
                     if (callback != null)
                         callback.onClaimReceived(
@@ -243,7 +242,6 @@ public class LotoClient {
                                 payload.getString("playerName"),
                                 payload.getInt("pageId"));
                     break;
-
                 case "WIN_CONFIRMED":
                     if (callback != null)
                         callback.onWinConfirmed(
@@ -251,47 +249,44 @@ public class LotoClient {
                                 payload.getString("playerName"),
                                 payload.getInt("pageId"));
                     break;
-
                 case "WIN_REJECTED":
                     if (callback != null)
                         callback.onWinRejected(
                                 payload.getString("playerId"),
                                 payload.getInt("pageId"));
                     break;
-
                 case "GAME_ENDED":
+                    // Draw stopped — others can still claim until ROOM_RESET
                     if (callback != null)
                         callback.onGameEnded(
-                                payload.getString("winnerPlayerId"),
-                                payload.getString("winnerName"));
+                                payload.optString("winnerPlayerId", ""),
+                                payload.optString("winnerName", ""));
                     break;
-
+                case "ROOM_RESET":
+                    // Jackpot paid, pages cleared — back to WAITING
+                    handleRoomReset(payload);
+                    break;
                 case "GAME_CANCELLED":
                     drawnNumbers.clear();
+                    pages.clear();
+                    setState(ClientState.IN_GAME);   // stays connected
                     if (callback != null)
                         callback.onGameCancelled(payload.optString("reason", ""));
                     break;
-
-                case "BALANCE_UPDATE":
-                    handleBalanceUpdate(payload);
+                case "BALANCE_UPDATE":       handleBalanceUpdate(payload);   break;
+                case "WALLET_HISTORY":       handleWalletHistory(payload);   break;
+                case "KICKED":
+                    running = false;
+                    if (connection != null) connection.close();
                     break;
-
-                case "WALLET_HISTORY":
-                    handleWalletHistory(payload);
-                    break;
-
                 case "ERROR":
                     String code    = payload.optString("code", "UNKNOWN");
                     String message = payload.optString("message", "");
-                    if ("INSUFFICIENT_BALANCE".equals(code) && callback != null) {
-                        // parse required/actual from message if available
+                    if ("INSUFFICIENT_BALANCE".equals(code) && callback != null)
                         callback.onInsufficientBalance(0, wallet.getBalance());
-                    }
                     if (callback != null) callback.onError(code, message);
                     break;
-
                 default:
-                    // unknown message type — ignore
                     break;
             }
         } catch (Exception e) {
@@ -306,21 +301,19 @@ public class LotoClient {
         token    = p.getString("token");
         isHost   = p.optBoolean("isHost", false);
 
-        // Restore pages from server
         pages.clear();
         JSONArray pagesArr = p.optJSONArray("pages");
         if (pagesArr != null) {
             for (int i = 0; i < pagesArr.length(); i++) {
                 ClientPage page = parseClientPage(pagesArr.getJSONObject(i));
                 if (page != null) {
-                    page.markAll(drawnNumbers); // restore marks if reconnecting mid-game
+                    page.markAll(drawnNumbers);
                     pages.add(page);
                 }
             }
         }
 
         setState(ClientState.IN_GAME);
-
         boolean wasReconnect = !drawnNumbers.isEmpty();
         if (wasReconnect) {
             if (callback != null) callback.onReconnected();
@@ -365,17 +358,14 @@ public class LotoClient {
     }
 
     private void handleNumberDrawn(JSONObject p) {
-        int        number   = p.getInt("number");
-        JSONArray  drawnArr = p.getJSONArray("drawnList");
+        int       number   = p.getInt("number");
+        JSONArray drawnArr = p.getJSONArray("drawnList");
 
-        // Rebuild drawn list
         drawnNumbers.clear();
         for (int i = 0; i < drawnArr.length(); i++) drawnNumbers.add(drawnArr.getInt(i));
 
-        // Auto-mark all pages + collect hits and wins
         List<ClientPage> markedPages = new ArrayList<>();
         List<ClientPage> wonPages    = new ArrayList<>();
-
         for (ClientPage page : pages) {
             boolean hit = page.mark(number);
             if (hit) {
@@ -387,12 +377,24 @@ public class LotoClient {
         if (callback != null)
             callback.onNumberDrawn(number, new ArrayList<>(drawnNumbers), markedPages, wonPages);
 
-        // Notify per won page + optionally auto-claim
         for (ClientPage wonPage : wonPages) {
             int rowIndex = wonPage.getWinningRowIndex();
             if (callback != null) callback.onPageWon(wonPage, rowIndex);
             if (autoClaimOnWin) claimWin(wonPage.getId());
         }
+    }
+
+    private void handleRoomReset(JSONObject p) {
+        // Server paid out jackpot — clear local game state
+        long prizeEach   = p.optLong("prizeEach", 0);
+        int  winnerCount = p.optInt("winnerCount", 0);
+
+        pages.clear();
+        drawnNumbers.clear();
+        currentDrawIntervalMs = 0;
+        setState(ClientState.IN_GAME);   // still connected, waiting for next game
+
+        if (callback != null) callback.onRoomReset(prizeEach, winnerCount);
     }
 
     private void handleBalanceUpdate(JSONObject p) {
@@ -440,70 +442,57 @@ public class LotoClient {
             for (int r = 0; r < gridArr.length(); r++) {
                 JSONArray rowArr = gridArr.getJSONArray(r);
                 List<Integer> row = new ArrayList<>();
-                for (int c = 0; c < rowArr.length(); c++) {
+                for (int c = 0; c < rowArr.length(); c++)
                     row.add(rowArr.isNull(c) ? null : rowArr.getInt(c));
-                }
                 grid.add(row);
             }
             return new ClientPage(id, grid);
-        } catch (Exception e) {
-            return null;
-        }
+        } catch (Exception e) { return null; }
     }
 
-    private void setState(ClientState newState) {
-        state = newState;
-    }
+    private void setState(ClientState newState) { state = newState; }
 
     private void send(String json) {
-        TcpConnection conn = connection;
+        IConnection conn = connection;
         if (conn != null && conn.isConnected()) conn.send(json);
     }
 
     // ── Builder ───────────────────────────────────────────────────
 
     public static class Builder {
-        private String               host                 = "localhost";
-        private int                  port                 = 9000;
-        private String               playerName           = "Player";
-        private boolean              autoReconnect        = true;
-        private int                  reconnectDelayMs     = 3_000;
-        private int                  maxReconnectAttempts = 0;     // 0 = infinite
-        private boolean              autoClaimOnWin       = false;
-        private LotoClientCallback   callback;
+        private String             host                 = "localhost";
+        private int                port                 = 9000;
+        private String             wsUrl                = null;
+        private String             roomId               = null;
+        private String             playerName           = "Player";
+        private boolean            autoReconnect        = true;
+        private int                reconnectDelayMs     = 3_000;
+        private int                maxReconnectAttempts = 0;
+        private boolean            autoClaimOnWin       = false;
+        private LotoClientCallback callback;
 
-        private boolean useWebSocket = false;
-        public Builder useWebSocket(boolean v) {
-            this.useWebSocket = v;
-            return this;
-        }
+        /** TCP host. Default: localhost */
+        public Builder host(String host)                    { this.host = host; return this; }
 
-        /** Server host / IP. Default: localhost */
-        public Builder host(String host)                         { this.host = host; return this; }
-
-        /** Server port. Default: 9000 */
-        public Builder port(int port)                            { this.port = port; return this; }
-
-        /** Player display name. */
-        public Builder playerName(String name)                   { this.playerName = name; return this; }
-
-        /** Auto-reconnect on disconnect. Default: true */
-        public Builder autoReconnect(boolean v)                  { this.autoReconnect = v; return this; }
-
-        /** Delay between reconnect attempts in ms. Default: 3000 */
-        public Builder reconnectDelayMs(int ms)                  { this.reconnectDelayMs = ms; return this; }
-
-        /** Max reconnect attempts (0 = infinite). Default: 0 */
-        public Builder maxReconnectAttempts(int n)               { this.maxReconnectAttempts = n; return this; }
+        /** TCP port. Default: 9000 */
+        public Builder port(int port)                       { this.port = port; return this; }
 
         /**
-         * If true, client automatically sends CLAIM_WIN when a page wins.
-         * If false, {@link LotoClientCallback#onPageWon} is fired and the app decides.
-         * Default: false
+         * Connect via WebSocket instead of TCP.
+         * Example: "ws://192.168.1.10:9001"
+         * Setting this overrides host/port for transport.
          */
-        public Builder autoClaimOnWin(boolean v)                 { this.autoClaimOnWin = v; return this; }
+        public Builder wsUrl(String wsUrl)                  { this.wsUrl = wsUrl; return this; }
 
-        public Builder callback(LotoClientCallback callback)     { this.callback = callback; return this; }
+        /** Room ID for multi-room servers. Null = single-room (default). */
+        public Builder roomId(String roomId)                { this.roomId = roomId; return this; }
+
+        public Builder playerName(String name)              { this.playerName = name; return this; }
+        public Builder autoReconnect(boolean v)             { this.autoReconnect = v; return this; }
+        public Builder reconnectDelayMs(int ms)             { this.reconnectDelayMs = ms; return this; }
+        public Builder maxReconnectAttempts(int n)          { this.maxReconnectAttempts = n; return this; }
+        public Builder autoClaimOnWin(boolean v)            { this.autoClaimOnWin = v; return this; }
+        public Builder callback(LotoClientCallback cb)      { this.callback = cb; return this; }
 
         public LotoClient build() {
             if (playerName == null || playerName.trim().isEmpty())

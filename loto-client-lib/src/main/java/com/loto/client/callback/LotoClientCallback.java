@@ -8,91 +8,101 @@ import java.util.List;
 
 /**
  * Implement in your app (PC or Android) to receive client-side game events.
- * All callbacks fire on the client's reader thread — marshal to UI thread as needed.
+ *
+ * <p><b>Threading:</b> All callbacks fire on the network reader thread.
+ * On Android, always marshal to UI thread:
+ * <pre>
+ *   runOnUiThread(() -> { ... });
+ * </pre>
  */
 public interface LotoClientCallback {
 
     // ── Connection ────────────────────────────────────────────────
 
-    /** TCP connection established, before JOIN is sent. */
     void onConnected();
 
-    /** Successfully joined the room. {@code isHost} = true if first player. */
+    /** Joined room. {@code isHost=true} if you are the first player. */
     void onJoined(String playerId, String token, boolean isHost);
 
-    /** Disconnected from server. Client will auto-reconnect if token is available. */
     void onDisconnected(boolean willRetry);
 
-    /** Successfully reconnected and state restored. */
     void onReconnected();
 
     // ── Room ──────────────────────────────────────────────────────
 
-    /** Full room snapshot (players list + game state) — fired on any change. */
+    /** Full room snapshot (players + state) — fires on any change. */
     void onRoomUpdate(List<RoomPlayer> players, String gameState);
 
-    /** Another player joined. */
     void onPlayerJoined(String playerId, String name, boolean isHost);
 
-    /** A player left or disconnected. */
     void onPlayerLeft(String playerId);
 
     // ── Pages ─────────────────────────────────────────────────────
 
-    /** Server assigned new pages after BUY_PAGE. */
     void onPagesAssigned(List<ClientPage> newPages);
 
-    /** Not enough balance to buy pages. */
     void onInsufficientBalance(long required, long actual);
 
     // ── Game flow ─────────────────────────────────────────────────
 
-    /** Vote count updated. */
     void onVoteUpdate(int current, int needed);
 
-    /** Game is starting — draw loop begins. */
+    /** Game starting — draw loop begins with given interval. */
     void onGameStarting(int drawIntervalMs);
 
     /**
-     * A number was drawn by server.
-     *
-     * @param number      the number just drawn
-     * @param drawnSoFar  all numbers drawn so far
-     * @param markedPages pages that had this number marked (hit)
-     * @param wonPages    pages that just completed a row (kình!)
+     * Server changed draw speed mid-game.
+     * @param intervalMs new interval in milliseconds
      */
-    void onNumberDrawn(int number, List<Integer> drawnSoFar,
-                       List<ClientPage> markedPages,
-                       List<ClientPage> wonPages);
+    void onDrawIntervalChanged(int intervalMs);
 
     /**
-     * One of this client's pages just completed a row — server hasn't been told yet.
-     * Client should call {@link com.loto.client.core.LotoClient#claimWin(int)} to report it,
-     * or the app can auto-claim (see {@code autoClaimOnWin} config).
+     * A number was drawn.
+     * @param number      number just drawn
+     * @param drawnSoFar  all numbers drawn so far
+     * @param markedPages your pages that had this number (hit)
+     * @param wonPages    your pages that just completed a row (kình!)
+     */
+    void onNumberDrawn(int number, List<Integer> drawnSoFar,
+                       List<ClientPage> markedPages, List<ClientPage> wonPages);
+
+    /**
+     * One of your pages just completed a row — server hasn't been told yet.
+     * Call {@code client.claimWin(page.getId())} or use {@code autoClaimOnWin}.
      */
     void onPageWon(ClientPage page, int rowIndex);
 
-    /** Server broadcast that someone claimed a win. */
+    /** Someone broadcast a win claim. */
     void onClaimReceived(String playerId, String playerName, int pageId);
 
-    /** Win was confirmed by host — game over. */
+    /**
+     * Win confirmed. Note: prize is NOT paid yet — it's held until host resets.
+     * Multiple winners can be confirmed before payout.
+     */
     void onWinConfirmed(String playerId, String playerName, int pageId);
 
-    /** Win was rejected by host — game continues. */
+    /** Win rejected — game continues. */
     void onWinRejected(String playerId, int pageId);
 
-    /** Game ended. */
+    /**
+     * First winner confirmed — draw stopped.
+     * Others can still claim until reset().
+     */
     void onGameEnded(String winnerPlayerId, String winnerName);
 
-    /** Game was cancelled by host — refunds issued. */
     void onGameCancelled(String reason);
+
+    /**
+     * Room was reset to WAITING. Jackpot has been split and paid to winners.
+     * @param prizeEach   amount each winner received (0 if no winners)
+     * @param winnerCount number of winners that were paid
+     */
+    void onRoomReset(long prizeEach, int winnerCount);
 
     // ── Wallet ────────────────────────────────────────────────────
 
-    /** Balance changed (buy page, win, top-up, refund). */
     void onBalanceUpdate(WalletInfo wallet);
 
-    /** Full transaction history received. */
     void onWalletHistory(WalletInfo wallet);
 
     // ── Errors ────────────────────────────────────────────────────

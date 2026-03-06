@@ -15,7 +15,11 @@ repositories {
 }
 
 dependencies {
-    implementation 'org.json:json:20240303'
+    // JSON parsing
+    implementation("org.json:json:20231013")
+
+    // WebSocket client (cùng lib với server)
+    implementation("org.java-websocket:Java-WebSocket:1.5.4")
 }
 
 // ── Fat JAR — self-contained, chạy được cả PC lẫn Android ─────────────────
