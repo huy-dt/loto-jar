@@ -421,14 +421,23 @@ public class GameRoom {
         Player player = playersByConnId.get(connId);
         if (player == null || state == GameState.PLAYING || state == GameState.ENDED) return;
 
+        // Bot không được tính vote
+        if (player.isBot()) return;
+
         state = GameState.VOTING;
         votedPlayerIds.add(player.getId());
 
         int needed = voteThreshold();
-        broadcast(OutboundMsg.voteUpdate(votedPlayerIds.size(), needed).toJson(), null);
-        if (callback != null) callback.onVoteUpdate(votedPlayerIds.size(), needed);
+        // Chỉ đếm số vote từ người thật (không tính bot)
+        long realVotes = votedPlayerIds.stream()
+                .map(this::findPlayerById)
+                .filter(p -> p != null && !p.isBot())
+                .count();
 
-        if (votedPlayerIds.size() >= needed) startGame();
+        broadcast(OutboundMsg.voteUpdate((int) realVotes, needed).toJson(), null);
+        if (callback != null) callback.onVoteUpdate((int) realVotes, needed);
+
+        if (realVotes >= needed) startGame();
     }
 
     // ─── Game flow ────────────────────────────────────────────────
@@ -823,19 +832,17 @@ public class GameRoom {
 
     /**
      * Changes the price per page.
-     * Allowed whenever NO player has bought any page yet (jackpot == 0),
-     * regardless of game state. Once the first page is purchased the price is locked.
+     * Allowed at any time EXCEPT when the game has ENDED.
+     * Changing price mid-game only affects future page purchases —
+     * pages already bought retain their original cost in the jackpot.
      * Broadcasts PRICE_PER_PAGE_CHANGED to all clients.
      *
      * @param newPrice new price in đồng (must be >= 0)
      */
     public synchronized void setPricePerPage(long newPrice) {
         if (newPrice < 0) newPrice = 0;
-        // Lock price once any page has been purchased (jackpot > 0 means money was collected)
-        if (jackpot > 0) {
-            // Already have purchases — reject silently (caller should check first)
-            return;
-        }
+        // Chỉ block khi đang WAITING mà đã có người mua giấy (jackpot > 0)
+        if (state == GameState.WAITING && jackpot > 0) return;
         long old = currentPricePerPage;
         currentPricePerPage = newPrice;
         broadcast(OutboundMsg.pricePerPageChanged(newPrice).toJson(), null);
@@ -843,8 +850,10 @@ public class GameRoom {
         if (callback != null) callback.onPricePerPageChanged(old, newPrice);
     }
 
-    /** Returns true if the price per page can still be changed (no pages bought yet). */
-    public boolean canChangePricePerPage() { return jackpot == 0; }
+    /** Returns true if the price per page can be changed. */
+    public boolean canChangePricePerPage() {
+        return !(state == GameState.WAITING && jackpot > 0);
+    }
 
     public long getCurrentPricePerPage() { return currentPricePerPage; }
 
@@ -1027,7 +1036,11 @@ public class GameRoom {
     }
 
     private int voteThreshold() {
-        int total = Math.max(1, playersByToken.size());
+        // Chỉ tính người chơi thật, không tính bot
+        long realPlayers = playersByToken.values().stream()
+                .filter(p -> !p.isBot())
+                .count();
+        int total = Math.max(1, (int) realPlayers);
         return Math.max(1, (int) Math.ceil(total * config.voteThresholdPct / 100.0));
     }
 

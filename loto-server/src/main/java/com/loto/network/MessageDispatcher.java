@@ -219,7 +219,7 @@ public class MessageDispatcher {
                 }
                 if (!_r.canChangePricePerPage()) {
                     handler.send(OutboundMsg.error("PRICE_LOCKED",
-                            "Cannot change price after pages have been purchased").toJson());
+                            "Cannot change price while waiting and pages already purchased").toJson());
                     return;
                 }
                 _r.setPricePerPage(price);
