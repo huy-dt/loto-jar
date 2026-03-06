@@ -84,6 +84,7 @@ public class Main {
                     case "--min-players":       b.minPlayers(Integer.parseInt(args[++i]));         break;
                     case "--auto-verify":       b.autoVerifyWin(true);                           break;
                     case "--auto-reset":        b.autoResetDelayMs(Integer.parseInt(args[++i])); break;
+                    case "--auto-start":        b.autoStartMs(Integer.parseInt(args[++i]));      break;
                     case "--admin-token":       b.adminToken(args[++i]);                        break;
 
                     // ── Transport flags ───────────────────────────
@@ -253,6 +254,28 @@ public class Main {
                     }
                     break;
 
+                case "autostart":
+                    // autostart        — show current delay
+                    // autostart <sec>  — set auto-start delay in seconds (0 = disable)
+                    if (parts.length < 2) {
+                        int cur = server.getRoom().getCurrentAutoStartMs();
+                        if (cur == 0) System.out.println("  Auto-start: TẮT");
+                        else          System.out.printf("  Auto-start: %d giây sau khi đủ %d người%n",
+                                cur / 1000, server.getRoom().getConfig().minPlayers);
+                        break;
+                    }
+                    try {
+                        int sec = Integer.parseInt(parts[1]);
+                        if (sec < 0) { System.out.println("  [!] Số giây phải >= 0 (0 = tắt)"); break; }
+                        server.getRoom().setAutoStartMs(sec * 1000);
+                        if (sec == 0) System.out.println("  [🚀] Auto-start đã TẮT");
+                        else          System.out.printf("  [🚀] Auto-start → %d giây sau khi đủ %d người%n",
+                                sec, server.getRoom().getConfig().minPlayers);
+                    } catch (NumberFormatException e) {
+                        System.out.println("  Usage: autostart <giây>  (e.g. autostart 10)  |  autostart 0 = tắt");
+                    }
+                    break;
+
                 case "reset":
                     server.getRoom().reset();
                     System.out.println("  [↺] Room reset. Jackpot đã chia, tờ cũ xóa, balance giữ nguyên.");
@@ -400,6 +423,8 @@ public class Main {
         System.out.printf ("║  Auto-verify win   : %-16s║%n", config.autoVerifyWin ? "ON" : "OFF");
         String arLabel = config.autoResetDelayMs > 0 ? config.autoResetDelayMs/1000 + "s" : "off";
         System.out.printf ("║  Auto-reset delay  : %-16s║%n", arLabel);
+        String asLabel = config.autoStartMs > 0 ? config.autoStartMs/1000 + "s after minPlayers" : "off";
+        System.out.printf ("║  Auto-start delay  : %-16s║%n", asLabel);
         System.out.println("╠══════════════════════════════════════╣");
         System.out.printf ("║  ⚠  ADMIN TOKEN (keep secret!)       ║%n");
         System.out.printf ("║  %s║%n", fitToken(config.adminToken));
@@ -425,6 +450,7 @@ public class Main {
         System.out.println("  speed  [ms]                        → xem / đổi tốc độ rút số (live, min 200ms)");
         System.out.println("  price  [amount]                    → xem / đổi giá cược/tờ (được khi chưa ai mua)");
         System.out.println("  autoreset [giây]                   → xem / đặt tự reset sau N giây (0 = tắt)");
+        System.out.println("  autostart [giây]                   → xem / đặt tự start sau N giây khi đủ minPlayers (0 = tắt)");
         System.out.println("  bot add <n> [maxTờ] [balance]    → thêm bot (mặc định: maxTờ=3, balance=999999)");
         System.out.println("  bot remove <n>                     → xóa bot");
         System.out.println("  bot list                           → xem danh sách bot");
@@ -564,6 +590,16 @@ public class Main {
         @Override public void onAutoResetDelayChanged(int oldMs, int newMs) {
             if (newMs == 0) System.out.println("[⏱] Auto-reset đã tắt");
             else System.out.printf("[⏱] Auto-reset delay: %ds → %ds%n", oldMs/1000, newMs/1000);
+        }
+
+        @Override public void onAutoStartScheduled(int delayMs) {
+            if (delayMs == 0) System.out.println("[🚀] Auto-start đã huỷ");
+            else System.out.printf("[🚀] Auto-start sau %d giây (đủ minPlayers)%n", delayMs / 1000);
+        }
+
+        @Override public void onAutoStartMsChanged(int oldMs, int newMs) {
+            if (newMs == 0) System.out.println("[🚀] Auto-start đã tắt");
+            else System.out.printf("[🚀] Auto-start delay: %ds → %ds%n", oldMs/1000, newMs/1000);
         }
 
         @Override public void onJackpotPaid(java.util.List<String> winnerIds, long prizeEach) {

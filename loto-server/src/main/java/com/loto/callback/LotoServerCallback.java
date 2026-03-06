@@ -129,4 +129,17 @@ public interface LotoServerCallback {
      * @param delayMs milliseconds until the room resets automatically
      */
     void onAutoResetScheduled(int delayMs);
+
+    /**
+     * Auto-start countdown has been triggered (room reached minPlayers).
+     * @param delayMs milliseconds until the game auto-starts (0 = cancelled)
+     */
+    void onAutoStartScheduled(int delayMs);
+
+    /**
+     * Auto-start delay was changed at runtime via {@code setAutoStartMs()}.
+     * @param oldMs previous delay (0 = was disabled)
+     * @param newMs new delay (0 = now disabled)
+     */
+    void onAutoStartMsChanged(int oldMs, int newMs);
 }

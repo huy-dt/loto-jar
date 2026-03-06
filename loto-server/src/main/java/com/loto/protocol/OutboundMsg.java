@@ -223,6 +223,16 @@ public class OutboundMsg {
         return new OutboundMsg(MsgType.GAME_RESUMED, p);
     }
 
+    /**
+     * Notifies clients of an auto-start countdown.
+     * delayMs == 0 means the auto-start was cancelled.
+     */
+    public static OutboundMsg autoStartScheduled(int delayMs) {
+        JSONObject p = new JSONObject();
+        p.put("delayMs", delayMs);
+        return new OutboundMsg(MsgType.AUTO_START_SCHEDULED, p);
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────
 
     private static JSONArray pagesToJson(List<LotoPage> pages) {

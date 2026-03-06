@@ -242,6 +242,18 @@ public class MessageDispatcher {
                 break;
             }
 
+            case SET_AUTO_START: {
+                if (!requireAdmin(connId, _r, handler)) return;
+                int delayMs = msg.getInt("delayMs", -1);
+                if (delayMs < 0) {
+                    handler.send(OutboundMsg.error("INVALID_DELAY",
+                            "delayMs must be >= 0 (0 = disable auto-start)").toJson());
+                    return;
+                }
+                _r.setAutoStartMs(delayMs);
+                break;
+            }
+
             case PAUSE_GAME: {
                 if (!requireAdmin(connId, _r, handler)) return;
                 if (_r.getState() != com.loto.core.GameState.PLAYING) {

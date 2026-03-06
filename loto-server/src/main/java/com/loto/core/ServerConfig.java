@@ -19,6 +19,7 @@ public class ServerConfig {
     public final TransportMode transportMode; // TCP / WS / BOTH
     public final boolean autoVerifyWin;      // server tự xác minh kình thay vì chờ host
     public final int  autoResetDelayMs;      // tự động reset sau xx ms khi ENDED/CANCELLED (0 = tắt)
+    public final int  autoStartMs;           // tự động start sau xx ms khi đủ minPlayers (0 = tắt)
     public final String adminToken;          // token bí mật để xác thực admin qua WebSocket/TCP (null = dùng UUID)
 
     private ServerConfig(Builder b) {
@@ -35,6 +36,7 @@ public class ServerConfig {
         this.transportMode      = b.transportMode;
         this.autoVerifyWin      = b.autoVerifyWin;
         this.autoResetDelayMs   = b.autoResetDelayMs;
+        this.autoStartMs        = b.autoStartMs;
         this.adminToken         = (b.adminToken != null && !b.adminToken.isEmpty())
                                     ? b.adminToken
                                     : java.util.UUID.randomUUID().toString();
@@ -44,10 +46,11 @@ public class ServerConfig {
     public String toString() {
         return String.format(
             "ServerConfig{port=%d, drawInterval=%dms, reconnectTimeout=%dms, " +
-            "voteThreshold=%d%%, maxPagesPerBuy=%d, pricePerPage=%d, initialBalance=%d, wsPort=%d, persist=%s, minPlayers=%d, autoResetDelay=%dms}",
+            "voteThreshold=%d%%, maxPagesPerBuy=%d, pricePerPage=%d, initialBalance=%d, wsPort=%d, persist=%s, minPlayers=%d, autoResetDelay=%dms, autoStart=%s}",
             port, drawIntervalMs, reconnectTimeoutMs, voteThresholdPct,
             maxPagesPerBuy, pricePerPage, initialBalance, wsPort,
-            persistPath != null ? persistPath : "off", minPlayers, autoResetDelayMs);
+            persistPath != null ? persistPath : "off", minPlayers, autoResetDelayMs,
+            autoStartMs > 0 ? autoStartMs + "ms" : "off");
     }
 
     // ─── Builder ──────────────────────────────────────────────────
@@ -66,6 +69,7 @@ public class ServerConfig {
         private TransportMode transportMode = TransportMode.BOTH;
         private boolean autoVerifyWin    = false;
         private int  autoResetDelayMs    = 0;      // 0 = auto-reset disabled
+        private int  autoStartMs         = 0;      // 0 = auto-start disabled
         private String adminToken        = null;   // null = auto-generate UUID
 
         /** TCP port to listen on. Default: 9000 */
@@ -77,7 +81,7 @@ public class ServerConfig {
 
         /** Milliseconds between each number draw. Default: 5000 */
         public Builder drawIntervalMs(int ms) {
-            if (ms < 500) throw new IllegalArgumentException("drawIntervalMs must be >= 500");
+            if (ms < 200) throw new IllegalArgumentException("drawIntervalMs must be >= 200");
             this.drawIntervalMs = ms;
             return this;
         }
@@ -152,6 +156,17 @@ public class ServerConfig {
         public Builder autoResetDelayMs(int ms) {
             if (ms < 0) throw new IllegalArgumentException("autoResetDelayMs must be >= 0");
             this.autoResetDelayMs = ms;
+            return this;
+        }
+
+        /**
+         * Milliseconds after room reaches minPlayers before auto-starting the game.
+         * Set to 0 (default) to disable.  Example: autoStartMs(10_000) → 10s countdown.
+         * Countdown resets if a player leaves and the room drops below minPlayers.
+         */
+        public Builder autoStartMs(int ms) {
+            if (ms < 0) throw new IllegalArgumentException("autoStartMs must be >= 0");
+            this.autoStartMs = ms;
             return this;
         }
 
