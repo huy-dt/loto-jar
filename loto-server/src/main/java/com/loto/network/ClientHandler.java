@@ -7,12 +7,13 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.net.InetAddress;
 
 /**
  * Manages the TCP connection for a single client.
  * Reads newline-delimited JSON messages and forwards them to the dispatcher.
  */
-public class ClientHandler implements Runnable {
+public class ClientHandler implements Runnable, IClientHandler {
 
     private final String             connectionId;   // temporary id before JOIN
     private final Socket             socket;
@@ -76,5 +77,11 @@ public class ClientHandler implements Runnable {
 
     public String getConnectionId() {
         return connectionId;
+    }
+
+    /** Returns the remote IP address string (e.g. "192.168.1.5"). */
+    public String getRemoteIp() {
+        InetAddress addr = socket.getInetAddress();
+        return addr != null ? addr.getHostAddress() : "unknown";
     }
 }

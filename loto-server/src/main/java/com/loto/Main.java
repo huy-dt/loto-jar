@@ -16,29 +16,45 @@ import java.util.Set;
  * Standalone entry point — chạy server từ terminal.
  *
  * Usage:
- *   java -jar loto-server.jar [options]
+ *   java -jar loto-server.jar [transport] [options]
+ *
+ * Transport (chọn 1, default: --both):
+ *   --tcp  [port]              TCP only  (default port: 9000)
+ *   --ws   [wsPort]            WS only   (default port: 9001)
+ *   --both [tcpPort] [wsPort]  TCP + WS  (default: 9000 + 9001)
  *
  * Options:
  *   --port              <int>   TCP port (default: 9000)
+ *   --ws-port           <int>   WebSocket port (default: tcpPort+1)
  *   --interval          <int>   Draw interval in ms (default: 5000)
  *   --reconnect-timeout <int>   Reconnect timeout in ms (default: 30000)
  *   --vote-threshold    <int>   Vote threshold % (default: 51)
  *   --max-pages         <int>   Max pages per buy (default: 10)
+ *   --price             <long>  Price per page (default: 10000)
+ *   --initial-balance   <long>  Starting balance per player (default: 0)
+ *   --persist           <path>  JSON save file path (default: off)
+ *   --min-players       <int>   Min players to allow start (default: 1)
  *
- * Example:
- *   java -jar loto-server.jar --port 8888 --interval 3000 --vote-threshold 100
+ * Examples:
+ *   java -jar loto-server.jar --tcp 9000
+ *   java -jar loto-server.jar --ws 9001
+ *   java -jar loto-server.jar --both 9000 9001 --price 5000 --persist save.json
  */
 public class Main {
 
     public static void main(String[] args) {
-        ServerConfig config = parseArgs(args);
+        ServerConfig.Builder configBuilder = parseArgsToBuilder(args);
+        ServerConfig config = configBuilder.build();
 
         printBanner(config);
 
         LotoServer server = new LotoServer.Builder()
                 .config(config)
+                .transportMode(config.transportMode)
                 .callback(new ConsoleCallback())
                 .build();
+
+        server.loadSavedState();
 
         Thread serverThread = new Thread(server::startSafe);
         serverThread.setDaemon(true);
@@ -49,11 +65,12 @@ public class Main {
 
     // ─── Arg parsing ─────────────────────────────────────────────
 
-    private static ServerConfig parseArgs(String[] args) {
+    private static ServerConfig.Builder parseArgsToBuilder(String[] args) {
         ServerConfig.Builder b = new ServerConfig.Builder();
-        for (int i = 0; i < args.length - 1; i++) {
+        for (int i = 0; i < args.length; i++) {
             try {
                 switch (args[i]) {
+                    // ── Existing options ──────────────────────────
                     case "--port":              b.port(Integer.parseInt(args[++i]));               break;
                     case "--interval":          b.drawIntervalMs(Integer.parseInt(args[++i]));     break;
                     case "--reconnect-timeout": b.reconnectTimeoutMs(Integer.parseInt(args[++i])); break;
@@ -61,14 +78,51 @@ public class Main {
                     case "--max-pages":         b.maxPagesPerBuy(Integer.parseInt(args[++i]));     break;
                     case "--price":             b.pricePerPage(Long.parseLong(args[++i]));         break;
                     case "--initial-balance":   b.initialBalance(Long.parseLong(args[++i]));       break;
+                    case "--persist":           b.persistPath(args[++i]);                         break;
+                    case "--min-players":       b.minPlayers(Integer.parseInt(args[++i]));         break;
+                    case "--auto-verify":       b.autoVerifyWin(true);                           break;
+
+                    // ── Transport flags ───────────────────────────
+                    // --tcp [port]          TCP only, optional port override
+                    case "--tcp": {
+                        if (i + 1 < args.length && args[i+1].matches("\\d+"))
+                            b.port(Integer.parseInt(args[++i]));
+                        b.transportMode(com.loto.core.TransportMode.TCP);
+                        break;
+                    }
+                    // --ws [port]           WebSocket only, optional WS port
+                    case "--ws": {
+                        if (i + 1 < args.length && args[i+1].matches("\\d+"))
+                            b.wsPort(Integer.parseInt(args[++i]));
+                        b.transportMode(com.loto.core.TransportMode.WS);
+                        break;
+                    }
+                    // --both [tcpPort] [wsPort]   Both transports, optional ports
+                    case "--both": {
+                        if (i + 1 < args.length && args[i+1].matches("\\d+"))
+                            b.port(Integer.parseInt(args[++i]));
+                        if (i + 1 < args.length && args[i+1].matches("\\d+"))
+                            b.wsPort(Integer.parseInt(args[++i]));
+                        b.transportMode(com.loto.core.TransportMode.BOTH);
+                        break;
+                    }
+
+                    // Legacy --ws-port still works for explicit WS port config
+                    case "--ws-port":
+                        b.wsPort(Integer.parseInt(args[++i]));
+                        break;
+
                     default:
-                        System.err.println("[WARN] Unknown option: " + args[i]);
+                        if (args[i].startsWith("--"))
+                            System.err.println("[WARN] Unknown option: " + args[i]);
                 }
+            } catch (ArrayIndexOutOfBoundsException e) {
+                System.err.println("[WARN] Missing value for " + args[i]);
             } catch (NumberFormatException e) {
-                System.err.println("[WARN] Invalid value for " + args[i] + " — using default");
+                System.err.println("[WARN] Invalid number for " + args[i]);
             }
         }
-        return b.build();
+        return b;
     }
 
     // ─── Interactive CLI ──────────────────────────────────────────
@@ -114,6 +168,61 @@ public class Main {
                     server.getRoom().topUp(parts[1], amount, note);
                     break;
 
+                case "start":
+                    server.getRoom().serverStart();
+                    System.out.println("  [→] Game started by server.");
+                    break;
+
+                case "end":
+                    String endReason = parts.length > 1
+                            ? String.join(" ", Arrays.copyOfRange(parts, 1, parts.length))
+                            : "Server kết thúc game";
+                    server.getRoom().serverEnd(endReason);
+                    System.out.println("  [→] Game ended by server.");
+                    break;
+
+                case "speed":
+                    // speed <ms>   — change draw interval live
+                    // speed        — show current interval
+                    if (parts.length < 2) {
+                        System.out.printf("  Current draw interval: %d ms%n",
+                                server.getRoom().getCurrentDrawIntervalMs());
+                        break;
+                    }
+                    try {
+                        int ms = Integer.parseInt(parts[1]);
+                        server.getRoom().setDrawInterval(ms);
+                        System.out.printf("  [⚡] Draw interval → %d ms%n", ms);
+                    } catch (NumberFormatException e) {
+                        System.out.println("  Usage: speed <ms>  (e.g. speed 2000)");
+                    }
+                    break;
+
+                case "reset":
+                    server.getRoom().reset();
+                    System.out.println("  [↺] Room reset. Jackpot đã chia, tờ cũ xóa, balance giữ nguyên.");
+                    break;
+
+                case "banip":
+                    // banip <ip>
+                    if (parts.length < 2) { System.out.println("Usage: banip <ip>"); break; }
+                    server.getRoom().banIp(parts[1]);
+                    System.out.println("  [⛔] Banned IP: " + parts[1]);
+                    break;
+
+                case "unbanip":
+                    if (parts.length < 2) { System.out.println("Usage: unbanip <ip>"); break; }
+                    server.getRoom().unbanIp(parts[1]);
+                    System.out.println("  [✓] Unbanned IP: " + parts[1]);
+                    break;
+
+                case "banlist":
+                    Set<String> banned = server.getRoom().getBannedIds();
+                    Set<String> bannedIps = server.getRoom().getBannedIps();
+                    System.out.println("  Names: " + (banned.isEmpty() ? "(trống)" : String.join(", ", banned)));
+                    System.out.println("  IPs:   " + (bannedIps.isEmpty() ? "(trống)" : String.join(", ", bannedIps)));
+                    break;
+
                 case "cancel":
                     String reason = parts.length > 1
                             ? String.join(" ", Arrays.copyOfRange(parts, 1, parts.length))
@@ -143,11 +252,7 @@ public class Main {
                     server.getRoom().unban(parts[1]);
                     break;
 
-                case "banlist":
-                    Set<String> banned = server.getRoom().getBannedIds();
-                    if (banned.isEmpty()) System.out.println("  (trống)");
-                    else banned.forEach(n -> System.out.println("  - " + n));
-                    break;
+
 
                 case "quit": case "exit":
                     System.out.println("Shutting down...");
@@ -164,16 +269,25 @@ public class Main {
     // ─── UI helpers ───────────────────────────────────────────────
 
     private static void printBanner(ServerConfig config) {
+        String transportLine;
+        switch (config.transportMode) {
+            case TCP:  transportLine = String.format("TCP only  (port %d)", config.port);          break;
+            case WS:   transportLine = String.format("WS only   (port %d)", config.wsPort);        break;
+            default:   transportLine = String.format("TCP:%d + WS:%d", config.port, config.wsPort); break;
+        }
         System.out.println("╔══════════════════════════════════════╗");
         System.out.println("║           LOTO SERVER                ║");
         System.out.println("╠══════════════════════════════════════╣");
-        System.out.printf ("║  Port              : %-16d║%n", config.port);
+        System.out.printf ("║  Transport         : %-16s║%n", transportLine);
         System.out.printf ("║  Draw interval     : %-13dms║%n", config.drawIntervalMs);
         System.out.printf ("║  Reconnect timeout : %-13dms║%n", config.reconnectTimeoutMs);
         System.out.printf ("║  Vote threshold    : %-15d%%║%n", config.voteThresholdPct);
         System.out.printf ("║  Max pages/buy     : %-16d║%n", config.maxPagesPerBuy);
         System.out.printf ("║  Price per page    : %,-16d║%n", config.pricePerPage);
         System.out.printf ("║  Initial balance   : %,-16d║%n", config.initialBalance);
+        System.out.printf ("║  Persist path      : %-16s║%n", config.persistPath != null ? config.persistPath : "off");
+        System.out.printf ("║  Min players       : %-16d║%n", config.minPlayers);
+        System.out.printf ("║  Auto-verify win   : %-16s║%n", config.autoVerifyWin ? "ON" : "OFF");
         System.out.println("╠══════════════════════════════════════╣");
         System.out.println("║  Type 'help' for commands            ║");
         System.out.println("╚══════════════════════════════════════╝");
@@ -181,6 +295,10 @@ public class Main {
 
     private static void printHelp() {
         System.out.println("  status                             → show players, jackpot, balances");
+        System.out.println("  start                              → server bắt đầu game (bypass vote)");
+        System.out.println("  end    [reason]                    → server kết thúc game (no winner)");
+        System.out.println("  reset                              → reset phòng về WAITING (giữ balance)");
+        System.out.println("  speed  [ms]                        → xem / đổi tốc độ rút số (live, min 200ms)");
         System.out.println("  topup  <playerId> <amount> [note]  → nạp tiền cho player");
         System.out.println("  confirm <playerId> <pageId>        → xác nhận kình");
         System.out.println("  reject  <playerId> <pageId>        → từ chối kình");
@@ -188,7 +306,9 @@ public class Main {
         System.out.println("  kick   <playerId> [reason]         → kick player");
         System.out.println("  ban    <playerId> [reason]         → kick + cấm tái join");
         System.out.println("  unban  <name>                      → gỡ cấm");
-        System.out.println("  banlist                            → xem danh sách bị cấm");
+        System.out.println("  banlist                            → xem tên + IP bị cấm");
+        System.out.println("  banip  <ip>                        → cấm theo IP");
+        System.out.println("  unbanip <ip>                       → gỡ cấm IP");
         System.out.println("  quit                               → stop server");
     }
 
@@ -282,6 +402,25 @@ public class Main {
 
         @Override public void onServerError(String msg) {
             System.err.println("[ERR] " + msg);
+        }
+
+        @Override public void onServerGameEnded(String reason) {
+            System.out.printf("[→] Game ended by server: %s%n", reason);
+        }
+
+        @Override public void onRoomReset() {
+            System.out.println("[↺] Room reset — WAITING for new game.");
+        }
+
+        @Override public void onDrawIntervalChanged(int oldMs, int newMs) {
+            System.out.printf("[⚡] Draw interval: %dms → %dms%n", oldMs, newMs);
+        }
+
+        @Override public void onJackpotPaid(java.util.List<String> winnerIds, long prizeEach) {
+            System.out.println("╔══════════════════════════════════════════╗");
+            System.out.printf ("║  💰 JACKPOT PAID — %d người thắng        ║%n", winnerIds.size());
+            System.out.printf ("║  Mỗi người nhận: %,d%-14s║%n", prizeEach, "");
+            System.out.println("╚══════════════════════════════════════════╝");
         }
     }
 }

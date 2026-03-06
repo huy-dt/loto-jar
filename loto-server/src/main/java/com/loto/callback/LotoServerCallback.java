@@ -82,4 +82,24 @@ public interface LotoServerCallback {
 
     /** A generic server error occurred. */
     void onServerError(String message);
+
+    /** Server ended the game programmatically (no winner, no prize). */
+    void onServerGameEnded(String reason);
+
+    /** Room was reset to WAITING — new game can begin. */
+    void onRoomReset();
+
+    /**
+     * Jackpot was split and paid out to all confirmed winners at reset time.
+     * @param winnerIds list of playerId that received prizes
+     * @param prizeEach amount each winner received (jackpot / count)
+     */
+    void onJackpotPaid(java.util.List<String> winnerIds, long prizeEach);
+
+    /**
+     * Draw interval was changed live (via {@code setDrawInterval()} or SET_DRAW_INTERVAL message).
+     * @param oldMs previous interval in ms
+     * @param newMs new interval in ms
+     */
+    void onDrawIntervalChanged(int oldMs, int newMs);
 }

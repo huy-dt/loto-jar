@@ -15,6 +15,7 @@ public enum MsgType {
     KICK,           // host only — kick player
     BAN,            // host only — ban player
     UNBAN,          // host only — gỡ ban
+    SET_DRAW_INTERVAL,  // host only — đổi tốc độ rút số realtime
 
     // ── Outbound (Server → Client) ─────────────────────────────────
     WELCOME,
@@ -34,5 +35,7 @@ public enum MsgType {
     GAME_CANCELLED,
     KICKED,         // gửi riêng cho player bị kick trước khi đóng kết nối
     BANNED,         // gửi cho player bị ban khi cố join
+    ROOM_RESET,     // server reset phòng về WAITING
+    DRAW_INTERVAL_CHANGED,  // server thay đổi tốc độ rút số
     ERROR
 }

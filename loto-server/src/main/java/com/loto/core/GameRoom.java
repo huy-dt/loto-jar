@@ -5,10 +5,13 @@ import com.loto.model.LotoPage;
 import com.loto.model.Player;
 import com.loto.model.PlayerInfo;
 import com.loto.model.Transaction;
-import com.loto.network.ClientHandler;
+
 import com.loto.protocol.OutboundMsg;
 
+import com.loto.network.IClientHandler;
+
 import java.util.*;
+import com.loto.persist.JsonPersistence;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -27,7 +30,8 @@ public class GameRoom {
     // ─── Players ──────────────────────────────────────────────────
     private final Map<String, Player>          playersByToken  = new ConcurrentHashMap<>();
     private final Map<String, Player>          playersByConnId = new ConcurrentHashMap<>();
-    private final Map<String, ClientHandler>   handlerByConnId = new ConcurrentHashMap<>();
+    private final Map<String, IClientHandler>  handlerByConnId = new ConcurrentHashMap<>();
+    private final Map<String, String>          ipByConnId      = new ConcurrentHashMap<>();
     private final Set<String>                  votedPlayerIds  = ConcurrentHashMap.newKeySet();
 
     // ─── Game data ────────────────────────────────────────────────
@@ -35,23 +39,32 @@ public class GameRoom {
     private final List<Integer>                numberPool     = new ArrayList<>();
     private final AtomicInteger                pageIdCounter  = new AtomicInteger(1);
 
-    // ─── Jackpot ──────────────────────────────────────────────────
+    // ─── Jackpot & winners ───────────────────────────────────────────
     private       long                         jackpot        = 0;
+    /** Players confirmed as winners — jackpot split on reset(). */
+    private final List<String>                 winnerIds      = new ArrayList<>();
 
     // ─── Ban list ─────────────────────────────────────────────────
-    // Lưu playerId bị ban — check khi JOIN
+    // Ban theo tên (fallback) và theo IP (chính)
     private final Set<String>                  bannedIds      = ConcurrentHashMap.newKeySet();
+    private final Set<String>                  bannedIps      = ConcurrentHashMap.newKeySet();
 
     // ─── Callback & scheduler ─────────────────────────────────────
     private       LotoServerCallback           callback;
+    private       JsonPersistence             persistence;
     private final ScheduledExecutorService     scheduler      = Executors.newSingleThreadScheduledExecutor();
     private       ScheduledFuture<?>           drawTask;
+    private       ScheduledFuture<?>           saveDebounce;
+    /** Current draw interval — can be changed live via setDrawInterval(). */
+    private volatile int                       currentDrawIntervalMs;
+    private static final int                   SAVE_DEBOUNCE_MS = 500;
 
     // ─── Constructor ──────────────────────────────────────────────
 
     public GameRoom(String roomId, ServerConfig config) {
         this.roomId = roomId;
         this.config = config;
+        this.currentDrawIntervalMs = config.drawIntervalMs;
         buildNumberPool();
     }
 
@@ -59,20 +72,130 @@ public class GameRoom {
         this.callback = callback;
     }
 
+
+    public void setPersistence(JsonPersistence persistence) {
+        this.persistence = persistence;
+    }
+
+
+    // ─── Snapshot restore ─────────────────────────────────────────
+
+    /**
+     * Restores room state from a {@link JsonPersistence.GameSnapshot}.
+     * Called by {@link com.loto.core.LotoServer#loadSavedState()} at startup.
+     * The room must be freshly constructed (no players connected yet).
+     */
+    public synchronized void restoreFromSnapshot(JsonPersistence.GameSnapshot snap) {
+        // Restore state
+        try { this.state = GameState.valueOf(snap.gameState); }
+        catch (Exception e) { this.state = GameState.WAITING; }
+        this.currentDrawIntervalMs = snap.drawIntervalMs > 0
+                ? snap.drawIntervalMs : config.drawIntervalMs;
+
+        this.jackpot = snap.jackpot;
+
+        // Restore drawn numbers & rebuild number pool
+        this.drawnNumbers.clear();
+        this.drawnNumbers.addAll(snap.drawnNumbers);
+        this.numberPool.clear();
+        for (int i = 1; i <= 90; i++) {
+            if (!drawnNumbers.contains(i)) numberPool.add(i);
+        }
+        Collections.shuffle(numberPool);
+
+        // Restore banned list
+        this.bannedIds.clear();
+        this.bannedIds.addAll(snap.bannedIds);
+        this.winnerIds.clear();
+        this.winnerIds.addAll(snap.winnerIds);
+
+        // Restore players (offline — they'll reconnect via token)
+        this.playersByToken.clear();
+        this.playersByConnId.clear();
+        this.handlerByConnId.clear();
+
+        int maxPageId = 0;
+        for (JsonPersistence.PlayerSnapshot ps : snap.players) {
+            Player player = Player.restore(ps.id, ps.token, ps.name, ps.isHost,
+                                           ps.balance, ps.pages, ps.transactions);
+            player.setConnected(false);
+            playersByToken.put(player.getToken(), player);
+            for (LotoPage page : player.getPages()) {
+                if (page.getId() > maxPageId) maxPageId = page.getId();
+            }
+        }
+        pageIdCounter.set(maxPageId + 1);
+
+        System.out.printf("[GameRoom] Restored: state=%s players=%d drawn=%d jackpot=%,d%n",
+                state, playersByToken.size(), drawnNumbers.size(), jackpot);
+    }
+
+    // ─── Persistence helpers ──────────────────────────────────────
+
+    /**
+     * Builds a full snapshot of the current room state and saves it to disk.
+     * Called automatically after every state-changing operation.
+     * No-op if no persistence is configured.
+     */
+    /**
+     * Schedules a save 500ms from now, cancelling any pending save.
+     * This way rapid events (e.g. many numbers drawn quickly) only trigger one write.
+     * For critical events (game end, cancel) call saveStateNow() instead.
+     */
+    public void saveState() {
+        if (persistence == null) return;
+        if (saveDebounce != null && !saveDebounce.isDone()) saveDebounce.cancel(false);
+        saveDebounce = scheduler.schedule(this::saveStateNow, SAVE_DEBOUNCE_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    /** Bypasses debounce — writes immediately. Used for critical state changes. */
+    public void saveStateNow() {
+        if (persistence == null) return;
+        JsonPersistence.GameSnapshot snap = new JsonPersistence.GameSnapshot();
+        snap.roomId      = roomId;
+        snap.gameState   = state.name();
+        snap.jackpot     = jackpot;
+        snap.drawnNumbers.addAll(drawnNumbers);
+        snap.bannedIds.addAll(bannedIds);
+        snap.winnerIds.addAll(winnerIds);
+        snap.drawIntervalMs = currentDrawIntervalMs;
+
+        for (Player p : playersByToken.values()) {
+            JsonPersistence.PlayerSnapshot ps = new JsonPersistence.PlayerSnapshot();
+            ps.id           = p.getId();
+            ps.token        = p.getToken();
+            ps.name         = p.getName();
+            ps.isHost       = p.isHost();
+            ps.balance      = p.getBalance();
+            ps.pages.addAll(p.getPages());
+            ps.transactions.addAll(p.getTransactions());
+            snap.players.add(ps);
+        }
+        persistence.save(snap);
+    }
+
     // ─── Player lifecycle ─────────────────────────────────────────
 
-    public synchronized Player join(String connId, String name, ClientHandler handler) {
+    public synchronized Player join(String connId, String name, IClientHandler handler) {
         boolean isHost = playersByToken.isEmpty();
         Player  player = new Player(name, isHost, config.initialBalance);
 
         // ── Check ban by temporary playerId seed — ban by name để đơn giản ──
         // (sau khi kick+ban, playerId mới sẽ khác nhưng tên giống → block)
         // Nếu muốn block chắc hơn thì dùng IP ở ClientHandler
+        // Check ban by IP (primary) then by name (fallback)
+        String ip = handler.getRemoteIp();
+        if (bannedIps.contains(ip)) {
+            handler.send(OutboundMsg.banned("IP này đã bị cấm vào phòng").toJson());
+            handler.close();
+            return null;
+        }
         if (bannedIds.contains(name.toLowerCase().trim())) {
             handler.send(OutboundMsg.banned("Tên này đã bị cấm vào phòng").toJson());
             handler.close();
             return null;
         }
+        ipByConnId.put(connId, ip);
 
         playersByToken.put(player.getToken(), player);
         playersByConnId.put(connId, player);
@@ -90,10 +213,11 @@ public class GameRoom {
         broadcastRoomUpdate();
 
         if (callback != null) callback.onPlayerJoined(player);
+        saveState();
         return player;
     }
 
-    public synchronized Player reconnect(String connId, String token, ClientHandler handler) {
+    public synchronized Player reconnect(String connId, String token, IClientHandler handler) {
         Player player = playersByToken.get(token);
         if (player == null) return null;
 
@@ -101,6 +225,7 @@ public class GameRoom {
         playersByConnId.values().remove(player);
         playersByConnId.put(connId, player);
         handlerByConnId.put(connId, handler);
+        ipByConnId.put(connId, handler.getRemoteIp());
 
         // Re-send full state
         handler.send(OutboundMsg.welcome(
@@ -126,6 +251,7 @@ public class GameRoom {
     public synchronized void onConnectionLost(String connId) {
         Player player = playersByConnId.remove(connId);
         handlerByConnId.remove(connId);
+        ipByConnId.remove(connId);
         if (player == null) return;
 
         player.setConnected(false);
@@ -188,6 +314,7 @@ public class GameRoom {
         broadcastRoomUpdate();
 
         if (callback != null) callback.onPagesBought(player, newPages);
+        saveState();
     }
 
     // ─── Voting ───────────────────────────────────────────────────
@@ -212,19 +339,29 @@ public class GameRoom {
         if (state == GameState.PLAYING) return;
         state = GameState.PLAYING;
 
-        broadcast(OutboundMsg.gameStarting(config.drawIntervalMs).toJson(), null);
+        broadcast(OutboundMsg.gameStarting(currentDrawIntervalMs).toJson(), null);
         broadcastRoomUpdate();
         if (callback != null) callback.onGameStarting();
 
         drawTask = scheduler.scheduleAtFixedRate(
                 this::drawNextNumber,
-                config.drawIntervalMs,
-                config.drawIntervalMs,
+                currentDrawIntervalMs,
+                currentDrawIntervalMs,
                 TimeUnit.MILLISECONDS);
     }
 
     private synchronized void drawNextNumber() {
-        if (numberPool.isEmpty() || state != GameState.PLAYING) { stopDrawing(); return; }
+        if (state != GameState.PLAYING) { stopDrawing(); return; }
+        if (numberPool.isEmpty()) {
+            stopDrawing();
+            // All 90 numbers drawn — end the game automatically
+            state = GameState.ENDED;
+            broadcast(OutboundMsg.gameEndedByServer("Hết 90 số — không có người thắng").toJson(), null);
+            broadcastRoomUpdate();
+            saveState();
+            if (callback != null) callback.onServerGameEnded("Hết 90 số — không có người thắng");
+            return;
+        }
         int number = numberPool.remove(numberPool.size() - 1);
         drawnNumbers.add(number);
 
@@ -236,7 +373,17 @@ public class GameRoom {
 
     public synchronized void claimWin(String connId, int pageId) {
         Player player = playersByConnId.get(connId);
-        if (player == null || state != GameState.PLAYING) return;
+        // Allow claim while PLAYING (game running) or ENDED (first winner confirmed,
+        // others still have time to claim before reset)
+        if (player == null) return;
+        if (state != GameState.PLAYING && state != GameState.ENDED) return;
+
+        // Prevent the same player claiming the same page twice
+        if (winnerIds.contains(player.getId())) {
+            sendTo(connId, OutboundMsg.error("ALREADY_CLAIMED",
+                    "Bạn đã được xác nhận thắng rồi").toJson());
+            return;
+        }
 
         LotoPage page = player.getPageById(pageId);
         if (page == null) {
@@ -246,38 +393,56 @@ public class GameRoom {
 
         broadcast(OutboundMsg.claimReceived(player.getId(), player.getName(), pageId).toJson(), null);
         if (callback != null) callback.onClaimReceived(player, pageId);
+
+        // Auto-verify if enabled: server checks the page immediately
+        if (config.autoVerifyWin) {
+            boolean valid = page.hasWinningRow(new ArrayList<>(drawnNumbers));
+            if (valid) {
+                confirmWin(player.getId(), pageId);
+            } else {
+                rejectWin(player.getId(), pageId);
+            }
+        }
     }
 
     /**
-     * Host confirms win → pays out jackpot to winner, ends game.
+     * Confirms a winner — stops drawing and marks them as a winner.
+     * Jackpot is NOT paid yet; it will be split equally among all confirmed
+     * winners when {@link #reset()} is called.
+     * Multiple players can be confirmed before reset.
      */
     public synchronized void confirmWin(String playerId, int pageId) {
         Player player = findPlayerById(playerId);
         if (player == null) return;
+        // Only valid while game is active (PLAYING or ENDED-but-not-reset)
+        if (state != GameState.PLAYING && state != GameState.ENDED) return;
 
-        stopDrawing();
-        state = GameState.ENDED;
+        // Stop drawing on first confirm
+        if (state == GameState.PLAYING) {
+            stopDrawing();
+            state = GameState.ENDED;
+        }
 
-        // Pay jackpot
-        long prize = jackpot;
-        if (prize > 0) {
-            player.addPrize(prize, "Thắng jackpot " + prize);
-            jackpot = 0;
+        // Register winner (avoid duplicates)
+        if (!winnerIds.contains(playerId)) {
+            winnerIds.add(playerId);
         }
 
         broadcast(OutboundMsg.winConfirmed(player.getId(), player.getName(), pageId).toJson(), null);
-        broadcast(OutboundMsg.gameEnded(player.getId(), player.getName()).toJson(), null);
 
-        // Send updated balance privately to winner
-        String winnerConnId = getConnIdForPlayer(player);
-        if (winnerConnId != null) sendBalanceUpdate(winnerConnId, player);
+        // Only broadcast GAME_ENDED on the first winner
+        if (winnerIds.size() == 1) {
+            broadcast(OutboundMsg.gameEnded(player.getId(), player.getName()).toJson(), null);
+        }
 
         broadcastRoomUpdate();
 
         if (callback != null) {
-            callback.onWinConfirmed(player, pageId, prize);
-            callback.onGameEnded(player, prize);
+            // prize = 0 here; actual payout happens at reset()
+            callback.onWinConfirmed(player, pageId, 0);
+            if (winnerIds.size() == 1) callback.onGameEnded(player, 0);
         }
+        saveStateNow();
     }
 
     public synchronized void rejectWin(String playerId, int pageId) {
@@ -303,7 +468,7 @@ public class GameRoom {
         if (player == null) return;
 
         String        connId  = getConnIdForPlayer(player);
-        ClientHandler handler = connId != null ? handlerByConnId.get(connId) : null;
+        IClientHandler handler = connId != null ? handlerByConnId.get(connId) : null;
 
         // Refund pages if game not started
         if (state == GameState.WAITING || state == GameState.VOTING) {
@@ -341,14 +506,36 @@ public class GameRoom {
     public synchronized void ban(String playerId, String reason) {
         Player player = findPlayerById(playerId);
         if (player != null) {
+            // Ban by IP (primary) + name (fallback)
+            String connId = getConnIdForPlayer(player);
+            if (connId != null) {
+                String ip = ipByConnId.get(connId);
+                if (ip != null && !ip.equals("unknown")) bannedIps.add(ip);
+            }
             bannedIds.add(player.getName().toLowerCase().trim());
             kick(playerId, reason != null ? reason : "Bị cấm khỏi phòng");
-            // onPlayerBanned fired after kick so callback gets both events
             if (callback != null) callback.onPlayerBanned(player.getId(), reason);
         } else {
             bannedIds.add(playerId.toLowerCase().trim());
             if (callback != null) callback.onPlayerBanned(playerId, reason);
         }
+    }
+
+    /** Ban an IP address directly (without needing a playerId). */
+    public synchronized void banIp(String ip) {
+        if (ip != null && !ip.isBlank()) {
+            bannedIps.add(ip.trim());
+            if (callback != null) callback.onPlayerBanned("ip:" + ip, "IP ban");
+        }
+    }
+
+    /** Unban an IP address explicitly. */
+    public synchronized void unbanIp(String ip) {
+        bannedIps.remove(ip);
+    }
+
+    public Set<String> getBannedIps() {
+        return Collections.unmodifiableSet(bannedIps);
     }
 
     /** Remove a name/id from the ban list. */
@@ -379,6 +566,140 @@ public class GameRoom {
 
         if (callback != null) callback.onTopUp(player, amount);
     }
+
+
+    // ─── Reset ────────────────────────────────────────────────────
+
+    /**
+     * Resets the room back to WAITING state so a new game can be started.
+     * - Clears drawn numbers, rebuilds number pool
+     * - Resets jackpot to 0
+     * - Clears all player pages (balance kept)
+     * - Clears votes
+     * - Resets pageIdCounter
+     * - Broadcasts ROOM_UPDATE so clients reflect the new state
+     *
+     * Does NOT remove players or clear ban list.
+     */
+    public synchronized void reset() {
+        stopDrawing();
+
+        // ── Pay out jackpot to all confirmed winners ──────────────
+        long prizeEach = 0;
+        if (!winnerIds.isEmpty() && jackpot > 0) {
+            prizeEach = jackpot / winnerIds.size();   // equal split
+            for (String wid : winnerIds) {
+                Player w = findPlayerById(wid);
+                if (w == null) continue;
+                w.addPrize(prizeEach,
+                    String.format("Jackpot chia %d người: %,d", winnerIds.size(), prizeEach));
+                String wConnId = getConnIdForPlayer(w);
+                if (wConnId != null) sendBalanceUpdate(wConnId, w);
+            }
+            if (callback != null) callback.onJackpotPaid(new ArrayList<>(winnerIds), prizeEach);
+        }
+
+        // ── Reset game state ──────────────────────────────────────
+        state = GameState.WAITING;
+        drawnNumbers.clear();
+        numberPool.clear();
+        buildNumberPool();
+        jackpot = 0;
+        votedPlayerIds.clear();
+        pageIdCounter.set(1);
+        winnerIds.clear();
+        currentDrawIntervalMs = config.drawIntervalMs;  // restore default on reset
+
+        // Clear each player's pages (balance stays)
+        for (Player p : playersByToken.values()) {
+            p.clearPages();
+        }
+
+        broadcast(OutboundMsg.roomReset(prizeEach, winnerIds.size()).toJson(), null);
+        broadcastRoomUpdate();
+        saveStateNow();
+
+        if (callback != null) callback.onRoomReset();
+    }
+
+    // ─── Server-controlled game flow ──────────────────────────────
+
+    /**
+     * Start the game immediately from the server side — bypasses vote threshold.
+     * Useful for programmatic control (timer, admin API, etc.).
+     * No-op if the game is already PLAYING or ENDED.
+     */
+    public synchronized void serverStart() {
+        if (state == GameState.ENDED) {
+            System.err.println("[GameRoom] serverStart() ignored — game ENDED. Call reset() first.");
+            return;
+        }
+        if (state == GameState.PLAYING) return;
+        startGame();
+    }
+
+    /**
+     * End the game gracefully from the server side.
+     * Behaves like a win confirmation without a winner — no prize is paid.
+     * Broadcasts GAME_ENDED with a null winner and transitions to ENDED.
+     * Call this when all 90 numbers have been drawn or by a scheduler.
+     */
+    public synchronized void serverEnd(String reason) {
+        if (state != GameState.PLAYING) return;
+
+        stopDrawing();
+        state = GameState.ENDED;
+
+        String msg = reason != null ? reason : "Server kết thúc game";
+        broadcast(OutboundMsg.gameEndedByServer(msg).toJson(), null);
+        broadcastRoomUpdate();
+
+        if (callback != null) callback.onServerGameEnded(msg);
+    }
+
+    /**
+     * Cancel the game from the server side — refunds all players.
+     * Identical to {@link #cancelGame(String)} but callable without a host.
+     */
+    public synchronized void serverCancel(String reason) {
+        cancelGame(reason != null ? reason : "Server hủy game");
+    }
+
+
+    // ─── Live draw speed control ──────────────────────────────────
+
+    /**
+     * Changes the draw interval immediately, even while the game is running.
+     *
+     * <p>If the game is currently PLAYING, the existing scheduled task is
+     * cancelled and a new one starts with the new interval right away.
+     * The next number will be drawn after {@code intervalMs} milliseconds
+     * from the moment this method is called.
+     *
+     * @param intervalMs new interval in milliseconds (minimum 200ms)
+     */
+    public synchronized void setDrawInterval(int intervalMs) {
+        if (intervalMs < 200) intervalMs = 200;   // hard floor
+        int old = currentDrawIntervalMs;
+        currentDrawIntervalMs = intervalMs;
+
+        // If currently playing, reschedule immediately with new interval
+        if (state == GameState.PLAYING) {
+            stopDrawing();
+            drawTask = scheduler.scheduleAtFixedRate(
+                    this::drawNextNumber,
+                    intervalMs,   // initial delay = new interval (clean cadence)
+                    intervalMs,
+                    TimeUnit.MILLISECONDS);
+        }
+
+        broadcast(OutboundMsg.drawIntervalChanged(intervalMs).toJson(), null);
+        saveState();
+
+        if (callback != null) callback.onDrawIntervalChanged(old, intervalMs);
+    }
+
+    public int getCurrentDrawIntervalMs() { return currentDrawIntervalMs; }
 
     // ─── Cancel game — refund all ─────────────────────────────────
 
@@ -414,6 +735,7 @@ public class GameRoom {
         broadcastRoomUpdate();
 
         if (callback != null) callback.onGameCancelled(reason, totalRefunded);
+        saveStateNow();
     }
 
     // ─── Wallet history (on demand) ───────────────────────────────
@@ -464,14 +786,21 @@ public class GameRoom {
 
     // ─── Broadcast helpers ────────────────────────────────────────
 
-    public synchronized void broadcast(String json, String excludeConnId) {
-        for (Map.Entry<String, ClientHandler> entry : handlerByConnId.entrySet()) {
-            if (!entry.getKey().equals(excludeConnId)) entry.getValue().send(json);
+    public void broadcast(String json, String excludeConnId) {
+        // Snapshot handlers under lock, then send outside lock so a slow/hung
+        // client cannot block the entire room while holding the monitor.
+        List<IClientHandler> targets;
+        synchronized (this) {
+            targets = new ArrayList<>();
+            for (Map.Entry<String, IClientHandler> entry : handlerByConnId.entrySet()) {
+                if (!entry.getKey().equals(excludeConnId)) targets.add(entry.getValue());
+            }
         }
+        for (IClientHandler h : targets) h.send(json);
     }
 
     public void sendTo(String connId, String json) {
-        ClientHandler handler = handlerByConnId.get(connId);
+        IClientHandler handler = handlerByConnId.get(connId);
         if (handler != null) handler.send(json);
     }
 
@@ -502,6 +831,11 @@ public class GameRoom {
                 .filter(e -> e.getValue() == target)
                 .map(Map.Entry::getKey)
                 .findFirst().orElse(null);
+    }
+
+    /** Used by MessageDispatcher to check host status. */
+    public Player getPlayerByConnId(String connId) {
+        return playersByConnId.get(connId);
     }
 
     public String      getRoomId()       { return roomId; }

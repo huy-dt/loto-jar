@@ -5,6 +5,10 @@ import com.loto.network.ClientHandler;
 import com.loto.network.MessageDispatcher;
 
 import java.io.IOException;
+import com.loto.core.TransportMode;
+import com.loto.network.WebSocketServer;
+import com.loto.network.MessageDispatcher;
+import com.loto.persist.JsonPersistence;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.UUID;
@@ -41,7 +45,10 @@ public class LotoServer {
     private final MessageDispatcher     dispatcher;
     private final ExecutorService       threadPool;
     private final AtomicBoolean         running = new AtomicBoolean(false);
+    private final TransportMode         transportMode;
     private       ServerSocket          serverSocket;
+    private       WebSocketServer       wsServer;
+    private       JsonPersistence       persistence;
 
     // ─── Constructor (use Builder) ────────────────────────────────
 
@@ -53,6 +60,20 @@ public class LotoServer {
 
         if (builder.callback != null) {
             room.setCallback(builder.callback);
+        }
+
+        this.transportMode = builder.config.transportMode;
+
+        // Persistence
+        if (config.persistPath != null) {
+            this.persistence = new JsonPersistence(config.persistPath);
+            room.setPersistence(this.persistence);
+            System.out.println("[LotoServer] Persistence → " + config.persistPath);
+        }
+
+        // WebSocket server (shares the same room)
+        if (config.wsPort > 0) {
+            this.wsServer = new WebSocketServer(room, config.wsPort);
         }
     }
 
@@ -69,6 +90,23 @@ public class LotoServer {
         running.set(true);
 
         System.out.println("[LotoServer] " + config);
+
+        // Start WebSocket transport on separate thread if configured
+        if (wsServer != null) {
+            Thread wsThread = new Thread(() -> wsServer.startSafe());
+            wsThread.setDaemon(true);
+            wsThread.setName("ws-server");
+            wsThread.start();
+        }
+
+        // In WS-only mode, we don't open a TCP socket — just block the thread
+        if (transportMode == TransportMode.WS) {
+            System.out.println("[LotoServer] TCP disabled (WS-only mode)");
+            while (running.get()) {
+                try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
+            }
+            return;
+        }
 
         while (running.get()) {
             try {
@@ -96,16 +134,37 @@ public class LotoServer {
         threadPool.shutdownNow();
         try { if (serverSocket != null) serverSocket.close(); }
         catch (IOException ignored) {}
+        if (wsServer != null) {
+            try { wsServer.stop(); } catch (Exception ignored) {}
+        }
     }
 
-    public GameRoom      getRoom()   { return room; }
-    public ServerConfig  getConfig() { return config; }
+    public GameRoom        getRoom()        { return room; }
+    public ServerConfig    getConfig()      { return config; }
+    public JsonPersistence getPersistence() { return persistence; }
+
+    /**
+     * Loads a previously saved snapshot and restores room state.
+     * Call this BEFORE starting the server if you want to resume a saved game.
+     */
+    public boolean loadSavedState() {
+        if (persistence == null) return false;
+        com.loto.persist.JsonPersistence.GameSnapshot snap = persistence.load();
+        if (snap == null) {
+            System.out.println("[LotoServer] No saved state found.");
+            return false;
+        }
+        room.restoreFromSnapshot(snap);
+        System.out.println("[LotoServer] State restored from " + config.persistPath);
+        return true;
+    }
 
     // ─── Builder ──────────────────────────────────────────────────
 
     public static class Builder {
-        private ServerConfig         config   = new ServerConfig.Builder().build();
+        private ServerConfig         config        = new ServerConfig.Builder().build();
         private LotoServerCallback   callback;
+        private TransportMode        transportMode = TransportMode.BOTH;
 
         /**
          * Pass a fully built {@link ServerConfig}.
@@ -124,6 +183,11 @@ public class LotoServer {
 
         public Builder callback(LotoServerCallback callback) {
             this.callback = callback;
+            return this;
+        }
+
+        public Builder transportMode(TransportMode mode) {
+            this.transportMode = mode != null ? mode : TransportMode.BOTH;
             return this;
         }
 

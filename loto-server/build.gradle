@@ -17,6 +17,7 @@ repositories {
 dependencies {
     // Only org.json — no heavy frameworks, stays lean for Android
     implementation 'org.json:json:20240303'
+    implementation 'org.java-websocket:Java-WebSocket:1.5.4'
 }
 
 // ── Fat JAR (includes org.json so it's self-contained) ─────────────────────

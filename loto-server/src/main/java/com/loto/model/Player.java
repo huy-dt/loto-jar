@@ -11,14 +11,17 @@ import java.util.UUID;
  */
 public class Player {
 
-    private final String         id;
-    private final String         token;
+    private       String         id;
+    private       String         token;
     private       String         name;
     private       boolean        isHost;
     private       boolean        connected;
     private       long           balance;
     private final List<LotoPage>    pages        = new ArrayList<>();
     private final List<Transaction> transactions = new ArrayList<>();
+    // used only during restore — see restore()
+    private transient String restoredId;
+    private transient String restoredToken;
 
     public Player(String name, boolean isHost, long initialBalance) {
         this.id      = UUID.randomUUID().toString().substring(0, 8);
@@ -31,8 +34,8 @@ public class Player {
 
     // ─── Accessors ────────────────────────────────────────────────
 
-    public String  getId()        { return id; }
-    public String  getToken()     { return token; }
+    public String  getId()        { return restoredId    != null ? restoredId    : id; }
+    public String  getToken()     { return restoredToken != null ? restoredToken : token; }
     public String  getName()      { return name; }
     public boolean isHost()       { return isHost; }
     public boolean isConnected()  { return connected; }
@@ -85,6 +88,30 @@ public class Player {
     public void topUp(long amount, String note) {
         balance += amount;
         transactions.add(new Transaction(Transaction.Type.TOPUP, amount, balance, note));
+    }
+
+
+    // ─── Restore factory ──────────────────────────────────────────
+
+    /**
+     * Reconstruct a Player from persisted data, preserving original IDs.
+     */
+    public static Player restore(String id, String token, String name, boolean isHost,
+                                 long balance, List<LotoPage> pages,
+                                 List<Transaction> transactions) {
+        Player p = new Player(name, isHost, 0);
+        p.restoredId    = id;
+        p.restoredToken = token;
+        p.balance       = balance;
+        p.pages.clear();
+        p.pages.addAll(pages);
+        p.transactions.clear();
+        p.transactions.addAll(transactions);
+        return p;
+    }
+
+    public void clearPages() {
+        pages.clear();
     }
 
     /** Refunds amount (e.g. game cancelled). */

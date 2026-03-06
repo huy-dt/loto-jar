@@ -13,6 +13,11 @@ public class ServerConfig {
     public final int  maxPagesPerBuy;
     public final long pricePerPage;       // cost to buy 1 page
     public final long initialBalance;     // balance each player starts with
+    public final int  wsPort;             // WebSocket port (0 = disabled)
+    public final String persistPath;      // JSON save file path (null = disabled)
+    public final int  minPlayers;         // minimum players before vote/start is allowed
+    public final TransportMode transportMode; // TCP / WS / BOTH
+    public final boolean autoVerifyWin;      // server tự xác minh kình thay vì chờ host
 
     private ServerConfig(Builder b) {
         this.port               = b.port;
@@ -22,15 +27,21 @@ public class ServerConfig {
         this.maxPagesPerBuy     = b.maxPagesPerBuy;
         this.pricePerPage       = b.pricePerPage;
         this.initialBalance     = b.initialBalance;
+        this.wsPort             = b.wsPort;
+        this.persistPath        = b.persistPath;
+        this.minPlayers         = b.minPlayers;
+        this.transportMode      = b.transportMode;
+        this.autoVerifyWin      = b.autoVerifyWin;
     }
 
     @Override
     public String toString() {
         return String.format(
             "ServerConfig{port=%d, drawInterval=%dms, reconnectTimeout=%dms, " +
-            "voteThreshold=%d%%, maxPagesPerBuy=%d, pricePerPage=%d, initialBalance=%d}",
+            "voteThreshold=%d%%, maxPagesPerBuy=%d, pricePerPage=%d, initialBalance=%d, wsPort=%d, persist=%s, minPlayers=%d}",
             port, drawIntervalMs, reconnectTimeoutMs, voteThresholdPct,
-            maxPagesPerBuy, pricePerPage, initialBalance);
+            maxPagesPerBuy, pricePerPage, initialBalance, wsPort,
+            persistPath != null ? persistPath : "off", minPlayers);
     }
 
     // ─── Builder ──────────────────────────────────────────────────
@@ -43,6 +54,11 @@ public class ServerConfig {
         private int  maxPagesPerBuy     = 10;
         private long pricePerPage       = 10_000;   // 10k mỗi tờ
         private long initialBalance     = 0;        // player bắt đầu với 0, host nạp
+        private int  wsPort             = 0;         // 0 = WebSocket disabled
+        private String persistPath      = null;       // null = persistence disabled
+        private int  minPlayers         = 1;         // min players to allow start/vote
+        private TransportMode transportMode = TransportMode.BOTH;
+        private boolean autoVerifyWin    = false;
 
         /** TCP port to listen on. Default: 9000 */
         public Builder port(int port) {
@@ -90,6 +106,53 @@ public class ServerConfig {
         public Builder initialBalance(long balance) {
             if (balance < 0) throw new IllegalArgumentException("initialBalance must be >= 0");
             this.initialBalance = balance;
+            return this;
+        }
+
+        /** WebSocket port. Set to e.g. 9001 to enable WS alongside TCP. 0 = disabled. */
+        public Builder wsPort(int port) {
+            this.wsPort = port;
+            return this;
+        }
+
+        /** Path to JSON save file. null or empty = no persistence. */
+        public Builder persistPath(String path) {
+            this.persistPath = (path != null && !path.isEmpty()) ? path : null;
+            return this;
+        }
+
+        /**
+         * --tcp  : TCP only  (wsPort forced to 0)
+         * --ws   : WS only   (TCP accept loop skipped; wsPort required or defaults to port+1)
+         * --both : TCP + WS  (default)
+         */
+        /**
+         * Nếu true: server tự kiểm tra page khi nhận CLAIM_WIN.
+         * Win hợp lệ → confirmWin tự động. Sai → rejectWin tự động.
+         * Default: false (host xác nhận thủ công).
+         */
+        public Builder autoVerifyWin(boolean auto) {
+            this.autoVerifyWin = auto;
+            return this;
+        }
+
+        public Builder transportMode(TransportMode mode) {
+            this.transportMode = mode != null ? mode : TransportMode.BOTH;
+            // WS-only: make sure wsPort has a value
+            if (mode == TransportMode.WS && this.wsPort == 0) {
+                this.wsPort = this.port + 1;
+            }
+            // TCP-only: disable WS
+            if (mode == TransportMode.TCP) {
+                this.wsPort = 0;
+            }
+            return this;
+        }
+
+        /** Minimum connected players before vote / serverStart is allowed. Default: 1 */
+        public Builder minPlayers(int min) {
+            if (min < 1) throw new IllegalArgumentException("minPlayers must be >= 1");
+            this.minPlayers = min;
             return this;
         }
 

@@ -158,6 +158,26 @@ public class OutboundMsg {
         return new OutboundMsg(MsgType.BANNED, p);
     }
 
+
+    public static OutboundMsg drawIntervalChanged(int intervalMs) {
+        JSONObject p = new JSONObject();
+        p.put("intervalMs", intervalMs);
+        return new OutboundMsg(MsgType.DRAW_INTERVAL_CHANGED, p);
+    }
+
+    public static OutboundMsg roomReset(long prizeEach, int winnerCount) {
+        JSONObject p = new JSONObject();
+        p.put("prizeEach",   prizeEach);
+        p.put("winnerCount", winnerCount);
+        return new OutboundMsg(MsgType.ROOM_RESET, p);
+    }
+
+    public static OutboundMsg gameEndedByServer(String reason) {
+        JSONObject p = new JSONObject();
+        p.put("reason", reason);
+        return new OutboundMsg(MsgType.GAME_ENDED, p);
+    }
+
     public static OutboundMsg error(String code, String message) {
         JSONObject p = new JSONObject();
         p.put("code",    code);
