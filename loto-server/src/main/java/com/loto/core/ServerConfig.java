@@ -19,6 +19,7 @@ public class ServerConfig {
     public final TransportMode transportMode; // TCP / WS / BOTH
     public final boolean autoVerifyWin;      // server tự xác minh kình thay vì chờ host
     public final int  autoResetDelayMs;      // tự động reset sau xx ms khi ENDED/CANCELLED (0 = tắt)
+    public final String adminToken;          // token bí mật để xác thực admin qua WebSocket/TCP (null = dùng UUID)
 
     private ServerConfig(Builder b) {
         this.port               = b.port;
@@ -34,6 +35,9 @@ public class ServerConfig {
         this.transportMode      = b.transportMode;
         this.autoVerifyWin      = b.autoVerifyWin;
         this.autoResetDelayMs   = b.autoResetDelayMs;
+        this.adminToken         = (b.adminToken != null && !b.adminToken.isEmpty())
+                                    ? b.adminToken
+                                    : java.util.UUID.randomUUID().toString();
     }
 
     @Override
@@ -62,6 +66,7 @@ public class ServerConfig {
         private TransportMode transportMode = TransportMode.BOTH;
         private boolean autoVerifyWin    = false;
         private int  autoResetDelayMs    = 0;      // 0 = auto-reset disabled
+        private String adminToken        = null;   // null = auto-generate UUID
 
         /** TCP port to listen on. Default: 9000 */
         public Builder port(int port) {
@@ -147,6 +152,13 @@ public class ServerConfig {
         public Builder autoResetDelayMs(int ms) {
             if (ms < 0) throw new IllegalArgumentException("autoResetDelayMs must be >= 0");
             this.autoResetDelayMs = ms;
+            return this;
+        }
+
+        /** Secret admin token used to authenticate admin commands over WebSocket/TCP.
+         *  If not set, a random UUID is generated at startup and printed to console. */
+        public Builder adminToken(String token) {
+            this.adminToken = (token != null && !token.isEmpty()) ? token : null;
             return this;
         }
 

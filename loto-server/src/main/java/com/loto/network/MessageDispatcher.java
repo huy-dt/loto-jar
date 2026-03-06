@@ -108,8 +108,24 @@ public class MessageDispatcher {
                 break;
             }
 
+            case ADMIN_AUTH: {
+                // { "type": "ADMIN_AUTH", "payload": { "token": "secret" } }
+                String token = msg.getString("token");
+                if (token == null) {
+                    handler.send(OutboundMsg.error("MISSING_TOKEN", "token is required").toJson());
+                    return;
+                }
+                GameRoom authRoom = (_r != null) ? _r : room;
+                if (authRoom == null) {
+                    handler.send(OutboundMsg.error("NO_ROOM", "No room available").toJson());
+                    return;
+                }
+                authRoom.adminAuth(connId, token, handler);
+                break;
+            }
+
             case CONFIRM_WIN: {
-                if (!requireHost(connId, handler)) return;
+                if (!requireAdmin(connId, _r, handler)) return;
                 String playerId = msg.getString("playerId");
                 int    pageId   = msg.getInt("pageId", -1);
                 if (playerId == null || pageId < 0) {
@@ -121,7 +137,7 @@ public class MessageDispatcher {
             }
 
             case REJECT_WIN: {
-                if (!requireHost(connId, handler)) return;
+                if (!requireAdmin(connId, _r, handler)) return;
                 String playerId = msg.getString("playerId");
                 int    pageId   = msg.getInt("pageId", -1);
                 if (playerId == null || pageId < 0) {
@@ -133,8 +149,7 @@ public class MessageDispatcher {
             }
 
             case TOPUP: {
-                if (!requireHost(connId, handler)) return;
-                // { "type": "TOPUP", "payload": { "playerId": "xxx", "amount": 50000, "note": "..." } }
+                if (!requireAdmin(connId, _r, handler)) return;
                 String playerId = msg.getString("playerId");
                 long   amount   = msg.getLong("amount", -1);
                 String note     = msg.getString("note");
@@ -147,21 +162,14 @@ public class MessageDispatcher {
             }
 
             case CANCEL_GAME: {
-                if (!requireHost(connId, handler)) return;
-                // { "type": "CANCEL_GAME", "payload": { "reason": "..." } }
+                if (!requireAdmin(connId, _r, handler)) return;
                 String reason = msg.getString("reason");
-                _r.cancelGame(reason != null ? reason : "Host hủy game");
-                break;
-            }
-
-            case GET_WALLET: {
-                _r.sendWalletHistory(connId);
+                _r.cancelGame(reason != null ? reason : "Admin hủy game");
                 break;
             }
 
             case KICK: {
-                if (!requireHost(connId, handler)) return;
-                // { "type": "KICK", "payload": { "playerId": "xxx", "reason": "..." } }
+                if (!requireAdmin(connId, _r, handler)) return;
                 String playerId = msg.getString("playerId");
                 if (playerId == null) {
                     handler.send(OutboundMsg.error("MISSING_FIELDS", "playerId required").toJson());
@@ -172,8 +180,7 @@ public class MessageDispatcher {
             }
 
             case BAN: {
-                if (!requireHost(connId, handler)) return;
-                // { "type": "BAN", "payload": { "playerId": "xxx", "reason": "..." } }
+                if (!requireAdmin(connId, _r, handler)) return;
                 String playerId = msg.getString("playerId");
                 if (playerId == null) {
                     handler.send(OutboundMsg.error("MISSING_FIELDS", "playerId required").toJson());
@@ -184,8 +191,7 @@ public class MessageDispatcher {
             }
 
             case UNBAN: {
-                if (!requireHost(connId, handler)) return;
-                // { "type": "UNBAN", "payload": { "name": "xxx" } }
+                if (!requireAdmin(connId, _r, handler)) return;
                 String name = msg.getString("name");
                 if (name == null) {
                     handler.send(OutboundMsg.error("MISSING_FIELDS", "name required").toJson());
@@ -196,8 +202,7 @@ public class MessageDispatcher {
             }
 
             case SET_DRAW_INTERVAL: {
-                // { "type": "SET_DRAW_INTERVAL", "payload": { "intervalMs": 3000 } }
-                if (!requireHost(connId, handler)) return;
+                if (!requireAdmin(connId, _r, handler)) return;
                 int intervalMs = msg.getInt("intervalMs", -1);
                 if (intervalMs < 200) {
                     handler.send(OutboundMsg.error("INVALID_INTERVAL",
@@ -209,8 +214,7 @@ public class MessageDispatcher {
             }
 
             case SET_PRICE_PER_PAGE: {
-                // { "type": "SET_PRICE_PER_PAGE", "payload": { "price": 20000 } }
-                if (!requireHost(connId, handler)) return;
+                if (!requireAdmin(connId, _r, handler)) return;
                 long price = msg.getLong("price", -1);
                 if (price < 0) {
                     handler.send(OutboundMsg.error("INVALID_PRICE",
@@ -227,9 +231,7 @@ public class MessageDispatcher {
             }
 
             case SET_AUTO_RESET: {
-                // { "type": "SET_AUTO_RESET", "payload": { "delayMs": 30000 } }
-                // delayMs = 0 → disable auto-reset
-                if (!requireHost(connId, handler)) return;
+                if (!requireAdmin(connId, _r, handler)) return;
                 int delayMs = msg.getInt("delayMs", -1);
                 if (delayMs < 0) {
                     handler.send(OutboundMsg.error("INVALID_DELAY",
@@ -237,6 +239,34 @@ public class MessageDispatcher {
                     return;
                 }
                 _r.setAutoResetDelay(delayMs);
+                break;
+            }
+
+            case PAUSE_GAME: {
+                if (!requireAdmin(connId, _r, handler)) return;
+                if (_r.getState() != com.loto.core.GameState.PLAYING) {
+                    handler.send(OutboundMsg.error("INVALID_STATE",
+                            "Game must be PLAYING to pause").toJson());
+                    return;
+                }
+                _r.pauseGame();
+                break;
+            }
+
+            case RESUME_GAME: {
+                if (!requireAdmin(connId, _r, handler)) return;
+                if (_r.getState() != com.loto.core.GameState.PAUSED) {
+                    handler.send(OutboundMsg.error("INVALID_STATE",
+                            "Game must be PAUSED to resume").toJson());
+                    return;
+                }
+                _r.resumeGame();
+                break;
+            }
+
+            case GET_WALLET: {
+                if (_r == null) { handler.send(OutboundMsg.error("NO_ROOM", "Not in a room").toJson()); return; }
+                _r.sendWalletHistory(connId);
                 break;
             }
 
@@ -252,21 +282,18 @@ public class MessageDispatcher {
     // Simple approach: inline resolve per dispatch call via local helper
     // _room() is resolved per-call in dispatch — see roomFor()
 
-    // ─── Host guard ───────────────────────────────────────────────
+    // ─── Admin guard ──────────────────────────────────────────────
 
     /**
-     * Returns true if the player associated with connId is the host.
-     * Sends an ERROR to the handler and returns false if not.
+     * Returns true if the connId has been authenticated as admin (via ADMIN_AUTH).
+     * Sends an ERROR to the handler and returns false otherwise.
+     * Admin does NOT need to be a joined player in the room.
      */
-    private boolean requireHost(String connId, IClientHandler handler) {
-        GameRoom r = roomFor(connId);
-        Player player = r != null ? r.getPlayerByConnId(connId) : null;
-        if (player == null || !player.isHost()) {
-            handler.send(OutboundMsg.error("NOT_HOST",
-                    "Only the host can perform this action").toJson());
-            return false;
-        }
-        return true;
+    private boolean requireAdmin(String connId, GameRoom r, IClientHandler handler) {
+        if (r != null && r.isAdmin(connId)) return true;
+        handler.send(OutboundMsg.error("NOT_ADMIN",
+                "Admin authentication required. Send ADMIN_AUTH with the server token first.").toJson());
+        return false;
     }
 
     public void onDisconnected(String connId) {

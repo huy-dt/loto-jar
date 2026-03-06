@@ -10,6 +10,9 @@ public enum GameState {
     /** Numbers are being drawn. */
     PLAYING,
 
+    /** Game is paused — draw timer stopped, can be resumed. */
+    PAUSED,
+
     /** A winner has been confirmed, game over. */
     ENDED
 }

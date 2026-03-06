@@ -86,6 +86,12 @@ public interface LotoServerCallback {
     /** Server ended the game programmatically (no winner, no prize). */
     void onServerGameEnded(String reason);
 
+    /** Game was paused — draw timer stopped. */
+    void onGamePaused();
+
+    /** Game was resumed after a pause — draw timer restarted. */
+    void onGameResumed();
+
     /** Room was reset to WAITING — new game can begin. */
     void onRoomReset();
 

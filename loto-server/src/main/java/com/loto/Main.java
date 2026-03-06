@@ -84,6 +84,7 @@ public class Main {
                     case "--min-players":       b.minPlayers(Integer.parseInt(args[++i]));         break;
                     case "--auto-verify":       b.autoVerifyWin(true);                           break;
                     case "--auto-reset":        b.autoResetDelayMs(Integer.parseInt(args[++i])); break;
+                    case "--admin-token":       b.adminToken(args[++i]);                        break;
 
                     // ── Transport flags ───────────────────────────
                     // --tcp [port]          TCP only, optional port override
@@ -174,6 +175,14 @@ public class Main {
                 case "start":
                     server.getRoom().serverStart();
                     System.out.println("  [→] Game started by server.");
+                    break;
+
+                case "pause":
+                    server.getRoom().pauseGame();
+                    break;
+
+                case "resume":
+                    server.getRoom().resumeGame();
                     break;
 
                 case "end":
@@ -392,13 +401,25 @@ public class Main {
         String arLabel = config.autoResetDelayMs > 0 ? config.autoResetDelayMs/1000 + "s" : "off";
         System.out.printf ("║  Auto-reset delay  : %-16s║%n", arLabel);
         System.out.println("╠══════════════════════════════════════╣");
+        System.out.printf ("║  ⚠  ADMIN TOKEN (keep secret!)       ║%n");
+        System.out.printf ("║  %s║%n", fitToken(config.adminToken));
+        System.out.println("╠══════════════════════════════════════╣");
         System.out.println("║  Type 'help' for commands            ║");
         System.out.println("╚══════════════════════════════════════╝");
+    }
+
+    /** Pads or truncates token to exactly 36 chars for banner display. */
+    private static String fitToken(String token) {
+        if (token == null) token = "";
+        if (token.length() > 36) token = token.substring(0, 36);
+        return String.format("%-36s", token);
     }
 
     private static void printHelp() {
         System.out.println("  status                             → show players, jackpot, balances");
         System.out.println("  start                              → server bắt đầu game (bypass vote)");
+        System.out.println("  pause                              → tạm dừng game (dừng rút số)");
+        System.out.println("  resume                             → tiếp tục game sau khi pause");
         System.out.println("  end    [reason]                    → server kết thúc game (no winner)");
         System.out.println("  reset                              → reset phòng về WAITING (giữ balance)");
         System.out.println("  speed  [ms]                        → xem / đổi tốc độ rút số (live, min 200ms)");
@@ -514,6 +535,14 @@ public class Main {
 
         @Override public void onServerGameEnded(String reason) {
             System.out.printf("[→] Game ended by server: %s%n", reason);
+        }
+
+        @Override public void onGamePaused() {
+            System.out.println("[⏸] Game PAUSED.");
+        }
+
+        @Override public void onGameResumed() {
+            System.out.println("[▶] Game RESUMED.");
         }
 
         @Override public void onRoomReset() {

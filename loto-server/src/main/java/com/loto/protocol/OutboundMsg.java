@@ -207,6 +207,22 @@ public class OutboundMsg {
         return new OutboundMsg(MsgType.ERROR, p);
     }
 
+    public static OutboundMsg adminAuthOk() {
+        JSONObject p = new JSONObject();
+        p.put("message", "Admin authenticated successfully");
+        return new OutboundMsg(MsgType.ADMIN_AUTH_OK, p);
+    }
+
+    public static OutboundMsg gamePaused() {
+        return new OutboundMsg(MsgType.GAME_PAUSED, new JSONObject());
+    }
+
+    public static OutboundMsg gameResumed(int drawIntervalMs) {
+        JSONObject p = new JSONObject();
+        p.put("drawIntervalMs", drawIntervalMs);
+        return new OutboundMsg(MsgType.GAME_RESUMED, p);
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────
 
     private static JSONArray pagesToJson(List<LotoPage> pages) {

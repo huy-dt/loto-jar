@@ -38,6 +38,9 @@ public class GameRoom {
     private       BotManager                   botManager;
     private final Set<String>                  votedPlayerIds  = ConcurrentHashMap.newKeySet();
 
+    // ─── Admin sessions (authenticated via admin token) ───────────
+    private final Set<String>                  adminConnIds    = ConcurrentHashMap.newKeySet();
+
     // ─── Game data ────────────────────────────────────────────────
     private final List<Integer>                drawnNumbers   = new ArrayList<>();
     private final List<Integer>                numberPool     = new ArrayList<>();
@@ -137,7 +140,7 @@ public class GameRoom {
 
         int maxPageId = 0;
         for (JsonPersistence.PlayerSnapshot ps : snap.players) {
-            Player player = Player.restore(ps.id, ps.token, ps.name, ps.isHost,
+            Player player = Player.restore(ps.id, ps.token, ps.name, false,  // no host role
                                            ps.balance, ps.pages, ps.transactions);
             player.setConnected(false);
             playersByToken.put(player.getToken(), player);
@@ -200,8 +203,8 @@ public class GameRoom {
     // ─── Player lifecycle ─────────────────────────────────────────
 
     public synchronized Player join(String connId, String name, IClientHandler handler) {
-        boolean isHost = playersByToken.isEmpty();
-        Player  player = new Player(name, isHost, config.initialBalance);
+        // No player is host — all players are equal peers
+        Player  player = new Player(name, false, config.initialBalance);
 
         // ── Check ban by temporary playerId seed — ban by name để đơn giản ──
         // (sau khi kick+ban, playerId mới sẽ khác nhưng tên giống → block)
@@ -226,11 +229,11 @@ public class GameRoom {
 
         // 1. WELCOME — private cho người mới
         handler.send(OutboundMsg.welcome(
-                player.getId(), player.getToken(), isHost, player.getPages()).toJson());
+                player.getId(), player.getToken(), false, player.getPages()).toJson());
 
         // 2. PLAYER_JOINED — others
         broadcast(OutboundMsg.playerJoined(
-                player.getId(), player.getName(), isHost).toJson(), connId);
+                player.getId(), player.getName(), false).toJson(), connId);
 
         // 3. ROOM_UPDATE — everyone
         broadcastRoomUpdate();
@@ -273,6 +276,7 @@ public class GameRoom {
         broadcast(OutboundMsg.playerLeft(bot.getId()).toJson(), null);
         broadcastRoomUpdate();
         saveState();
+        if (callback != null) callback.onPlayerLeft(bot, true);
     }
 
     /**
@@ -327,7 +331,7 @@ public class GameRoom {
 
         // Re-send full state
         handler.send(OutboundMsg.welcome(
-                player.getId(), player.getToken(), player.isHost(), player.getPages()).toJson());
+                player.getId(), player.getToken(), false, player.getPages()).toJson());
 
         // Re-send balance + transaction history
         sendBalanceSnapshot(connId, player);
@@ -339,7 +343,7 @@ public class GameRoom {
         }
 
         broadcast(OutboundMsg.playerJoined(
-                player.getId(), player.getName(), player.isHost()).toJson(), null);
+                player.getId(), player.getName(), false).toJson(), null);
         broadcastRoomUpdate();
 
         if (callback != null) callback.onPlayerReconnected(player);
@@ -350,6 +354,7 @@ public class GameRoom {
         Player player = playersByConnId.remove(connId);
         handlerByConnId.remove(connId);
         ipByConnId.remove(connId);
+        adminConnIds.remove(connId);  // clean up any admin session
         if (player == null) return;
 
         player.setConnected(false);
@@ -491,7 +496,7 @@ public class GameRoom {
         // Allow claim while PLAYING (game running) or ENDED (first winner confirmed,
         // others still have time to claim before reset)
         if (player == null) return;
-        if (state != GameState.PLAYING && state != GameState.ENDED) return;
+        if (state != GameState.PLAYING && state != GameState.ENDED && state != GameState.PAUSED) return;
 
         // Prevent the same player claiming the same page twice
         if (winnerIds.contains(player.getId())) {
@@ -529,11 +534,11 @@ public class GameRoom {
     public synchronized void confirmWin(String playerId, int pageId) {
         Player player = findPlayerById(playerId);
         if (player == null) return;
-        // Only valid while game is active (PLAYING or ENDED-but-not-reset)
-        if (state != GameState.PLAYING && state != GameState.ENDED) return;
+        // Only valid while game is active (PLAYING, PAUSED, or ENDED-but-not-reset)
+        if (state != GameState.PLAYING && state != GameState.PAUSED && state != GameState.ENDED) return;
 
-        // Stop drawing on first confirm
-        if (state == GameState.PLAYING) {
+        // Stop drawing on first confirm (also handles PAUSED → ENDED transition)
+        if (state == GameState.PLAYING || state == GameState.PAUSED) {
             stopDrawing();
             state = GameState.ENDED;
         }
@@ -769,7 +774,7 @@ public class GameRoom {
      * Call this when all 90 numbers have been drawn or by a scheduler.
      */
     public synchronized void serverEnd(String reason) {
-        if (state != GameState.PLAYING) return;
+        if (state != GameState.PLAYING && state != GameState.PAUSED) return;
 
         stopDrawing();
         state = GameState.ENDED;
@@ -790,6 +795,45 @@ public class GameRoom {
      */
     public synchronized void serverCancel(String reason) {
         cancelGame(reason != null ? reason : "Server hủy game");
+    }
+
+    // ─── Pause / Resume ───────────────────────────────────────────
+
+    /**
+     * Pauses the game — stops the draw timer but keeps all state intact.
+     * Players can still claim wins on numbers already drawn.
+     * Only valid when state == PLAYING.
+     * Admin only (enforced in MessageDispatcher).
+     */
+    public synchronized void pauseGame() {
+        if (state != GameState.PLAYING) return;
+        stopDrawing();
+        state = GameState.PAUSED;
+        broadcast(OutboundMsg.gamePaused().toJson(), null);
+        broadcastRoomUpdate();
+        saveState();
+        if (callback != null) callback.onGamePaused();
+        System.out.println("[GameRoom] Game PAUSED — " + drawnNumbers.size() + " numbers drawn so far.");
+    }
+
+    /**
+     * Resumes a paused game — restarts the draw timer from where it left off.
+     * Only valid when state == PAUSED.
+     * Admin only (enforced in MessageDispatcher).
+     */
+    public synchronized void resumeGame() {
+        if (state != GameState.PAUSED) return;
+        state = GameState.PLAYING;
+        drawTask = scheduler.scheduleAtFixedRate(
+                this::drawNextNumber,
+                currentDrawIntervalMs,
+                currentDrawIntervalMs,
+                TimeUnit.MILLISECONDS);
+        broadcast(OutboundMsg.gameResumed(currentDrawIntervalMs).toJson(), null);
+        broadcastRoomUpdate();
+        saveState();
+        if (callback != null) callback.onGameResumed();
+        System.out.println("[GameRoom] Game RESUMED.");
     }
 
 
@@ -815,10 +859,11 @@ public class GameRoom {
             stopDrawing();
             drawTask = scheduler.scheduleAtFixedRate(
                     this::drawNextNumber,
-                    intervalMs,   // initial delay = new interval (clean cadence)
+                    intervalMs,
                     intervalMs,
                     TimeUnit.MILLISECONDS);
         }
+        // If PAUSED — just save the new interval; it will take effect on resume
 
         broadcast(OutboundMsg.drawIntervalChanged(intervalMs).toJson(), null);
         saveState();
@@ -1060,6 +1105,34 @@ public class GameRoom {
     /** Used by MessageDispatcher to check host status. */
     public Player getPlayerByConnId(String connId) {
         return playersByConnId.get(connId);
+    }
+
+    // ─── Admin auth ───────────────────────────────────────────────
+
+    /**
+     * Authenticates a connection as admin using the server's adminToken.
+     * Returns true and marks the connId as admin if token matches.
+     * The connection does NOT need to be a joined player.
+     */
+    public synchronized boolean adminAuth(String connId, String token, IClientHandler handler) {
+        if (token != null && token.equals(config.adminToken)) {
+            adminConnIds.add(connId);
+            handler.send(OutboundMsg.adminAuthOk().toJson());
+            System.out.println("[GameRoom] Admin authenticated: connId=" + connId);
+            return true;
+        }
+        handler.send(OutboundMsg.error("AUTH_FAILED", "Invalid admin token").toJson());
+        return false;
+    }
+
+    /** Returns true if this connId has been authenticated as admin. */
+    public boolean isAdmin(String connId) {
+        return adminConnIds.contains(connId);
+    }
+
+    /** Remove admin session on disconnect. */
+    public void removeAdminSession(String connId) {
+        adminConnIds.remove(connId);
     }
 
     public String      getRoomId()       { return roomId; }
