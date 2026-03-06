@@ -92,6 +92,23 @@ public class ClientMsgBuilder {
         return msg("SET_DRAW_INTERVAL", new JSONObject().put("intervalMs", intervalMs));
     }
 
+    /**
+     * Change price per page (host only).
+     * Only allowed before any page has been purchased (jackpot == 0).
+     * @param price new price in đồng (>= 0)
+     */
+    public static String setPricePerPage(long price) {
+        return msg("SET_PRICE_PER_PAGE", new JSONObject().put("price", price));
+    }
+
+    /**
+     * Set auto-reset delay after game ends (host only).
+     * @param delayMs milliseconds (0 = disable auto-reset)
+     */
+    public static String setAutoReset(int delayMs) {
+        return msg("SET_AUTO_RESET", new JSONObject().put("delayMs", delayMs));
+    }
+
     // ── Helper ────────────────────────────────────────────────────
 
     private static String msg(String type, JSONObject payload) {

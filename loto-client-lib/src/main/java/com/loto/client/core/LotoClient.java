@@ -60,6 +60,8 @@ public class LotoClient {
     private volatile String            token;
     private volatile boolean           isHost;
     private volatile int               currentDrawIntervalMs;
+    private volatile long              currentPricePerPage;
+    private volatile int               currentAutoResetDelayMs;
 
     private final List<ClientPage>     pages        = new CopyOnWriteArrayList<>();
     private final List<Integer>        drawnNumbers = new CopyOnWriteArrayList<>();
@@ -185,12 +187,31 @@ public class LotoClient {
         send(ClientMsgBuilder.setDrawInterval(intervalMs));
     }
 
+    /**
+     * Change price per page — host only.
+     * Only accepted by server while jackpot == 0 (no pages bought yet).
+     * @param price new price in đồng (>= 0)
+     */
+    public void setPricePerPage(long price) {
+        send(ClientMsgBuilder.setPricePerPage(price));
+    }
+
+    /**
+     * Set auto-reset delay after game ends — host only.
+     * @param delayMs milliseconds (0 = disable)
+     */
+    public void setAutoReset(int delayMs) {
+        send(ClientMsgBuilder.setAutoReset(delayMs));
+    }
+
     // ── State accessors ───────────────────────────────────────────
 
     public ClientState       getState()                  { return state; }
     public String            getPlayerId()               { return playerId; }
     public boolean           isHost()                    { return isHost; }
     public int               getCurrentDrawIntervalMs()  { return currentDrawIntervalMs; }
+    public long              getCurrentPricePerPage()    { return currentPricePerPage; }
+    public int               getCurrentAutoResetDelayMs(){ return currentAutoResetDelayMs; }
     public List<ClientPage>  getPages()                  { return Collections.unmodifiableList(pages); }
     public List<Integer>     getDrawnNumbers()           { return Collections.unmodifiableList(drawnNumbers); }
     public WalletInfo        getWallet()                 { return wallet; }
@@ -234,6 +255,14 @@ public class LotoClient {
                     currentDrawIntervalMs = payload.optInt("intervalMs", currentDrawIntervalMs);
                     if (callback != null) callback.onDrawIntervalChanged(currentDrawIntervalMs);
                     break;
+                case "PRICE_PER_PAGE_CHANGED":
+                    currentPricePerPage = payload.optLong("price", currentPricePerPage);
+                    if (callback != null) callback.onPricePerPageChanged(currentPricePerPage);
+                    break;
+                case "AUTO_RESET_SCHEDULED":
+                    currentAutoResetDelayMs = payload.optInt("delayMs", 0);
+                    if (callback != null) callback.onAutoResetScheduled(currentAutoResetDelayMs);
+                    break;
                 case "NUMBER_DRAWN":         handleNumberDrawn(payload);     break;
                 case "CLAIM_RECEIVED":
                     if (callback != null)
@@ -262,6 +291,10 @@ public class LotoClient {
                                 payload.optString("winnerPlayerId", ""),
                                 payload.optString("winnerName", ""));
                     break;
+                case "GAME_ENDED_BY_SERVER":
+                    if (callback != null)
+                        callback.onGameEndedByServer(payload.optString("reason", ""));
+                    break;
                 case "ROOM_RESET":
                     // Jackpot paid, pages cleared — back to WAITING
                     handleRoomReset(payload);
@@ -278,6 +311,12 @@ public class LotoClient {
                 case "KICKED":
                     running = false;
                     if (connection != null) connection.close();
+                    if (callback != null) callback.onKicked(payload.optString("reason", ""));
+                    break;
+                case "BANNED":
+                    running = false;
+                    if (connection != null) connection.close();
+                    if (callback != null) callback.onBanned(payload.optString("reason", ""));
                     break;
                 case "ERROR":
                     String code    = payload.optString("code", "UNKNOWN");
@@ -332,11 +371,16 @@ public class LotoClient {
                         obj.getString("playerId"),
                         obj.getString("name"),
                         obj.optBoolean("isHost", false),
+                        obj.optBoolean("isBot", false),
                         obj.optBoolean("isConnected", true),
                         obj.optInt("pageCount", 0),
                         obj.optLong("balance", 0)));
             }
         }
+        // Sync room-level settings if server included them
+        if (p.has("pricePerPage"))     currentPricePerPage     = p.getLong("pricePerPage");
+        if (p.has("autoResetDelayMs")) currentAutoResetDelayMs = p.getInt("autoResetDelayMs");
+
         if (callback != null)
             callback.onRoomUpdate(players, p.optString("gameState", "WAITING"));
     }

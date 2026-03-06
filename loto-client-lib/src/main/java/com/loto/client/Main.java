@@ -218,6 +218,35 @@ public class Main {
                     }
                     break;
 
+                case "price":
+                    // price           → xem giá hiện tại
+                    // price <amount>  → đặt giá mới (chỉ khi chưa ai mua)
+                    if (parts.length < 2) {
+                        System.out.printf("  Giá tờ hiện tại: %,d đồng%n",
+                                client.getCurrentPricePerPage());
+                    } else {
+                        long newPrice = safeLong(parts[1], -1);
+                        if (newPrice < 0) { System.out.println("  Giá không hợp lệ"); break; }
+                        client.setPricePerPage(newPrice);
+                        System.out.printf("  → Đặt giá tờ: %,d đồng%n", newPrice);
+                    }
+                    break;
+
+                case "autoreset":
+                    // autoreset           → xem cài đặt hiện tại
+                    // autoreset <giây>    → đặt delay (0 = tắt)
+                    if (parts.length < 2) {
+                        int cur = client.getCurrentAutoResetDelayMs();
+                        System.out.printf("  Auto-reset: %s%n",
+                                cur > 0 ? cur/1000 + " giây" : "tắt");
+                    } else {
+                        int sec = safeInt(parts[1], 0);
+                        client.setAutoReset(sec * 1000);
+                        System.out.printf("  → Auto-reset: %s%n",
+                                sec > 0 ? sec + " giây" : "tắt");
+                    }
+                    break;
+
                 case "quit": case "exit":
                     client.disconnect();
                     System.exit(0);
@@ -265,6 +294,10 @@ public class Main {
         System.out.println("  Drawn    : " + client.getDrawnNumbers().size() + " / 90");
         if (client.getCurrentDrawIntervalMs() > 0)
             System.out.println("  Speed    : " + client.getCurrentDrawIntervalMs() + " ms/số");
+        if (client.getCurrentPricePerPage() > 0)
+            System.out.printf ("  Price    : %,d đồng/tờ%n", client.getCurrentPricePerPage());
+        int ar = client.getCurrentAutoResetDelayMs();
+        System.out.println("  AutoReset: " + (ar > 0 ? ar/1000 + "s" : "tắt"));
     }
 
     private static void printBanner(String server, boolean isWs,
@@ -290,15 +323,17 @@ public class Main {
         System.out.println("  pages                          → xem tờ + trạng thái");
         System.out.println("  wallet                         → số dư & lịch sử");
         System.out.println("  status                         → trạng thái kết nối");
-        System.out.println("  ── Host only ─────────────────────────────────────");
+        System.out.println("  ── Host only ──────────────────────────────────────");
         System.out.println("  confirm <playerId> <pageId>    → xác nhận kình");
         System.out.println("  reject  <playerId> <pageId>    → từ chối kình");
         System.out.println("  topup   <playerId> <amount>    → nạp tiền");
         System.out.println("  cancel  [reason]               → hủy game");
         System.out.println("  kick    <playerId> [reason]    → kick");
         System.out.println("  ban     <playerId> [reason]    → ban");
-        System.out.println("  unban   <name>                 → gỡ ban");
+        System.out.println("  unban   <tên>                  → gỡ ban");
         System.out.println("  speed   [ms]                   → xem/đổi tốc độ rút số");
+        System.out.println("  price   [số tiền]              → xem/đổi giá tờ");
+        System.out.println("  autoreset [giây]               → xem/đổi auto-reset (0=tắt)");
         System.out.println("  quit                           → thoát");
     }
 
@@ -349,6 +384,15 @@ public class Main {
         @Override public void onDrawIntervalChanged(int intervalMs) {
             System.out.printf("[⚡] Tốc độ đổi → %d ms/số%n", intervalMs);
         }
+        @Override public void onPricePerPageChanged(long newPrice) {
+            System.out.printf("[💲] Giá tờ đổi → %,d đồng%n", newPrice);
+        }
+        @Override public void onAutoResetScheduled(int delayMs) {
+            if (delayMs > 0)
+                System.out.printf("[⏱] Auto-reset sau %d giây%n", delayMs / 1000);
+            else
+                System.out.println("[⏱] Auto-reset đã tắt");
+        }
         @Override public void onNumberDrawn(int number, List<Integer> drawn,
                                             List<ClientPage> markedPages, List<ClientPage> wonPages) {
             System.out.printf("[#] Số: %-3d  (%d/90)", number, drawn.size());
@@ -383,6 +427,21 @@ public class Main {
         }
         @Override public void onGameCancelled(String reason) {
             System.out.println("[✗] Game hủy: " + reason + " — tiền đã hoàn");
+        }
+        @Override public void onGameEndedByServer(String reason) {
+            System.out.println("╔══════════════════════════════════════════╗");
+            System.out.printf ("║  ⏹  Game kết thúc: %-22s║%n", reason);
+            System.out.println("╚══════════════════════════════════════════╝");
+        }
+        @Override public void onKicked(String reason) {
+            System.out.println("╔══════════════════════════════════════════╗");
+            System.out.printf ("║  🚫 Bạn bị kick: %-24s║%n", reason);
+            System.out.println("╚══════════════════════════════════════════╝");
+        }
+        @Override public void onBanned(String reason) {
+            System.out.println("╔══════════════════════════════════════════╗");
+            System.out.printf ("║  🔨 Bạn bị cấm: %-25s║%n", reason);
+            System.out.println("╚══════════════════════════════════════════╝");
         }
         @Override public void onRoomReset(long prizeEach, int winnerCount) {
             System.out.println("╔══════════════════════════════════════════╗");

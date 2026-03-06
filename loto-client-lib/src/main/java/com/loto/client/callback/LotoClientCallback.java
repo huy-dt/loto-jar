@@ -57,6 +57,18 @@ public interface LotoClientCallback {
     void onDrawIntervalChanged(int intervalMs);
 
     /**
+     * Host changed price per page (only while jackpot == 0).
+     * @param newPrice new price in đồng
+     */
+    void onPricePerPageChanged(long newPrice);
+
+    /**
+     * Auto-reset was scheduled or cancelled.
+     * @param delayMs ms until reset (0 = cancelled / disabled)
+     */
+    void onAutoResetScheduled(int delayMs);
+
+    /**
      * A number was drawn.
      * @param number      number just drawn
      * @param drawnSoFar  all numbers drawn so far
@@ -91,6 +103,24 @@ public interface LotoClientCallback {
     void onGameEnded(String winnerPlayerId, String winnerName);
 
     void onGameCancelled(String reason);
+
+    /**
+     * Server ended the game without a winner (e.g. all 90 numbers drawn).
+     * @param reason description from server
+     */
+    void onGameEndedByServer(String reason);
+
+    /**
+     * You were kicked from the room.
+     * @param reason kick reason from host
+     */
+    void onKicked(String reason);
+
+    /**
+     * You were banned from the room.
+     * @param reason ban reason
+     */
+    void onBanned(String reason);
 
     /**
      * Room was reset to WAITING. Jackpot has been split and paid to winners.

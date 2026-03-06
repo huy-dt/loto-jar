@@ -111,11 +111,15 @@ public class AndroidLotoClient {
     public void ban(String playerId, String reason)              { client.ban(playerId, reason); }
     public void unban(String name)                               { client.unban(name); }
     public void setDrawInterval(int ms)                          { client.setDrawInterval(ms); }
+    public void setPricePerPage(long price)                      { client.setPricePerPage(price); }
+    public void setAutoReset(int delayMs)                        { client.setAutoReset(delayMs); }
 
     public com.loto.client.core.ClientState getState()           { return client.getState(); }
     public String           getPlayerId()                        { return client.getPlayerId(); }
     public boolean          isHost()                             { return client.isHost(); }
     public int              getCurrentDrawIntervalMs()           { return client.getCurrentDrawIntervalMs(); }
+    public long             getCurrentPricePerPage()             { return client.getCurrentPricePerPage(); }
+    public int              getCurrentAutoResetDelayMs()         { return client.getCurrentAutoResetDelayMs(); }
     public List<ClientPage> getPages()                           { return client.getPages(); }
     public List<Integer>    getDrawnNumbers()                    { return client.getDrawnNumbers(); }
     public WalletInfo       getWallet()                          { return client.getWallet(); }
@@ -150,6 +154,8 @@ public class AndroidLotoClient {
         @Override public void onVoteUpdate(int c, int n)                       { ui(() -> delegate.onVoteUpdate(c, n)); }
         @Override public void onGameStarting(int ms)                           { ui(() -> delegate.onGameStarting(ms)); }
         @Override public void onDrawIntervalChanged(int ms)                    { ui(() -> delegate.onDrawIntervalChanged(ms)); }
+        @Override public void onPricePerPageChanged(long price)                { ui(() -> delegate.onPricePerPageChanged(price)); }
+        @Override public void onAutoResetScheduled(int delayMs)               { ui(() -> delegate.onAutoResetScheduled(delayMs)); }
         @Override public void onNumberDrawn(int n, List<Integer> drawn,
                                             List<ClientPage> marked,
                                             List<ClientPage> won)              { ui(() -> delegate.onNumberDrawn(n, drawn, marked, won)); }
@@ -159,6 +165,9 @@ public class AndroidLotoClient {
         @Override public void onWinRejected(String id, int pg)                 { ui(() -> delegate.onWinRejected(id, pg)); }
         @Override public void onGameEnded(String id, String n)                 { ui(() -> delegate.onGameEnded(id, n)); }
         @Override public void onGameCancelled(String r)                        { ui(() -> delegate.onGameCancelled(r)); }
+        @Override public void onGameEndedByServer(String r)                    { ui(() -> delegate.onGameEndedByServer(r)); }
+        @Override public void onKicked(String r)                               { ui(() -> delegate.onKicked(r)); }
+        @Override public void onBanned(String r)                               { ui(() -> delegate.onBanned(r)); }
         @Override public void onRoomReset(long prize, int count)               { ui(() -> delegate.onRoomReset(prize, count)); }
         @Override public void onBalanceUpdate(WalletInfo w)                    { ui(() -> delegate.onBalanceUpdate(w)); }
         @Override public void onWalletHistory(WalletInfo w)                    { ui(() -> delegate.onWalletHistory(w)); }
