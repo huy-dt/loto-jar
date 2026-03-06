@@ -39,6 +39,7 @@ public class Player {
     public String  getName()      { return name; }
     public boolean isHost()       { return isHost; }
     public boolean isConnected()  { return connected; }
+    public boolean isBot()        { return false; }  // overridden by BotPlayer
     public long    getBalance()   { return balance; }
 
     public List<LotoPage> getPages() {

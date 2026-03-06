@@ -16,6 +16,8 @@ public enum MsgType {
     BAN,            // host only — ban player
     UNBAN,          // host only — gỡ ban
     SET_DRAW_INTERVAL,  // host only — đổi tốc độ rút số realtime
+    SET_PRICE_PER_PAGE, // host only — đổi giá tiền cược mỗi tờ (khi chưa có ai mua)
+    SET_AUTO_RESET,     // host only — đổi/tắt auto-reset delay (bất kỳ lúc nào)
 
     // ── Outbound (Server → Client) ─────────────────────────────────
     WELCOME,
@@ -37,5 +39,7 @@ public enum MsgType {
     BANNED,         // gửi cho player bị ban khi cố join
     ROOM_RESET,     // server reset phòng về WAITING
     DRAW_INTERVAL_CHANGED,  // server thay đổi tốc độ rút số
+    PRICE_PER_PAGE_CHANGED, // server thay đổi giá cược mỗi tờ
+    AUTO_RESET_SCHEDULED,   // server thông báo sẽ tự reset sau xx giây
     ERROR
 }

@@ -30,13 +30,22 @@ public class OutboundMsg {
 
     // ─── Factory methods ─────────────────────────────────────────
 
-    public static OutboundMsg roomUpdate(List<PlayerInfo> players, String gameState) {
+    public static OutboundMsg roomUpdate(List<PlayerInfo> players, String gameState,
+                                         long pricePerPage, int autoResetDelayMs) {
         JSONObject p    = new JSONObject();
         JSONArray  arr  = new JSONArray();
         for (PlayerInfo info : players) arr.put(info.toJson());
-        p.put("players",   arr);
-        p.put("gameState", gameState);
+        p.put("players",        arr);
+        p.put("gameState",      gameState);
+        p.put("pricePerPage",   pricePerPage);
+        p.put("autoResetDelaySec", autoResetDelayMs / 1000);
         return new OutboundMsg(MsgType.ROOM_UPDATE, p);
+    }
+
+    /** @deprecated Use {@link #roomUpdate(List, String, long, int)} instead. */
+    @Deprecated
+    public static OutboundMsg roomUpdate(List<PlayerInfo> players, String gameState) {
+        return roomUpdate(players, gameState, 0, 0);
     }
 
     public static OutboundMsg welcome(String playerId, String token, boolean isHost,
@@ -163,6 +172,19 @@ public class OutboundMsg {
         JSONObject p = new JSONObject();
         p.put("intervalMs", intervalMs);
         return new OutboundMsg(MsgType.DRAW_INTERVAL_CHANGED, p);
+    }
+
+    public static OutboundMsg pricePerPageChanged(long newPrice) {
+        JSONObject p = new JSONObject();
+        p.put("pricePerPage", newPrice);
+        return new OutboundMsg(MsgType.PRICE_PER_PAGE_CHANGED, p);
+    }
+
+    public static OutboundMsg autoResetScheduled(int delayMs) {
+        JSONObject p = new JSONObject();
+        p.put("delayMs",  delayMs);
+        p.put("delaySec", delayMs / 1000);
+        return new OutboundMsg(MsgType.AUTO_RESET_SCHEDULED, p);
     }
 
     public static OutboundMsg roomReset(long prizeEach, int winnerCount) {

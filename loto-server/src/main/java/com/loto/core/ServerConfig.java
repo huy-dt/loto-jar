@@ -18,6 +18,7 @@ public class ServerConfig {
     public final int  minPlayers;         // minimum players before vote/start is allowed
     public final TransportMode transportMode; // TCP / WS / BOTH
     public final boolean autoVerifyWin;      // server tự xác minh kình thay vì chờ host
+    public final int  autoResetDelayMs;      // tự động reset sau xx ms khi ENDED/CANCELLED (0 = tắt)
 
     private ServerConfig(Builder b) {
         this.port               = b.port;
@@ -32,16 +33,17 @@ public class ServerConfig {
         this.minPlayers         = b.minPlayers;
         this.transportMode      = b.transportMode;
         this.autoVerifyWin      = b.autoVerifyWin;
+        this.autoResetDelayMs   = b.autoResetDelayMs;
     }
 
     @Override
     public String toString() {
         return String.format(
             "ServerConfig{port=%d, drawInterval=%dms, reconnectTimeout=%dms, " +
-            "voteThreshold=%d%%, maxPagesPerBuy=%d, pricePerPage=%d, initialBalance=%d, wsPort=%d, persist=%s, minPlayers=%d}",
+            "voteThreshold=%d%%, maxPagesPerBuy=%d, pricePerPage=%d, initialBalance=%d, wsPort=%d, persist=%s, minPlayers=%d, autoResetDelay=%dms}",
             port, drawIntervalMs, reconnectTimeoutMs, voteThresholdPct,
             maxPagesPerBuy, pricePerPage, initialBalance, wsPort,
-            persistPath != null ? persistPath : "off", minPlayers);
+            persistPath != null ? persistPath : "off", minPlayers, autoResetDelayMs);
     }
 
     // ─── Builder ──────────────────────────────────────────────────
@@ -59,6 +61,7 @@ public class ServerConfig {
         private int  minPlayers         = 1;         // min players to allow start/vote
         private TransportMode transportMode = TransportMode.BOTH;
         private boolean autoVerifyWin    = false;
+        private int  autoResetDelayMs    = 0;      // 0 = auto-reset disabled
 
         /** TCP port to listen on. Default: 9000 */
         public Builder port(int port) {
@@ -133,6 +136,17 @@ public class ServerConfig {
          */
         public Builder autoVerifyWin(boolean auto) {
             this.autoVerifyWin = auto;
+            return this;
+        }
+
+        /**
+         * Milliseconds after game ENDED or CANCELLED before the room auto-resets.
+         * Set to 0 (default) to disable auto-reset entirely.
+         * Example: autoResetDelayMs(30_000) → reset 30 seconds after game ends.
+         */
+        public Builder autoResetDelayMs(int ms) {
+            if (ms < 0) throw new IllegalArgumentException("autoResetDelayMs must be >= 0");
+            this.autoResetDelayMs = ms;
             return this;
         }
 

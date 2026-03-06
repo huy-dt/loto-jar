@@ -117,7 +117,9 @@ public class JsonPersistence {
         root.put("drawnNumbers", new JSONArray(snap.drawnNumbers));
         root.put("bannedIds",    new JSONArray(snap.bannedIds));
         root.put("winnerIds",    new JSONArray(snap.winnerIds));
-        root.put("drawIntervalMs", snap.drawIntervalMs);
+        root.put("drawIntervalMs",   snap.drawIntervalMs);
+        root.put("pricePerPage",     snap.pricePerPage);
+        root.put("autoResetDelayMs", snap.autoResetDelayMs);
 
         JSONArray playersArr = new JSONArray();
         for (PlayerSnapshot ps : snap.players) {
@@ -186,7 +188,9 @@ public class JsonPersistence {
         if (banned != null) {
             for (int i = 0; i < banned.length(); i++) snap.bannedIds.add(banned.getString(i));
         }
-        snap.drawIntervalMs = root.optInt("drawIntervalMs", 0);
+        snap.drawIntervalMs   = root.optInt("drawIntervalMs",   -1);
+        snap.pricePerPage     = root.optLong("pricePerPage",    -1);
+        snap.autoResetDelayMs = root.optInt("autoResetDelayMs", -1);
         JSONArray winners = root.optJSONArray("winnerIds");
         if (winners != null) {
             for (int i = 0; i < winners.length(); i++) snap.winnerIds.add(winners.getString(i));
@@ -257,7 +261,9 @@ public class JsonPersistence {
         public List<Integer>      drawnNumbers = new ArrayList<>();
         public Set<String>        bannedIds    = new LinkedHashSet<>();
         public List<String>       winnerIds    = new ArrayList<>();
-        public int                drawIntervalMs = 0;  // 0 = use config default
+        public int                drawIntervalMs  = -1;  // -1 = use config default (200ms min is valid)
+        public long               pricePerPage    = -1;  // -1 = use config default (0 = free is valid)
+        public int                autoResetDelayMs = -1; // -1 = use config default (0 = disabled is valid)
         public List<PlayerSnapshot> players    = new ArrayList<>();
     }
 

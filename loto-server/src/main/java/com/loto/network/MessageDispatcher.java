@@ -208,6 +208,38 @@ public class MessageDispatcher {
                 break;
             }
 
+            case SET_PRICE_PER_PAGE: {
+                // { "type": "SET_PRICE_PER_PAGE", "payload": { "price": 20000 } }
+                if (!requireHost(connId, handler)) return;
+                long price = msg.getLong("price", -1);
+                if (price < 0) {
+                    handler.send(OutboundMsg.error("INVALID_PRICE",
+                            "price must be >= 0").toJson());
+                    return;
+                }
+                if (!_r.canChangePricePerPage()) {
+                    handler.send(OutboundMsg.error("PRICE_LOCKED",
+                            "Cannot change price after pages have been purchased").toJson());
+                    return;
+                }
+                _r.setPricePerPage(price);
+                break;
+            }
+
+            case SET_AUTO_RESET: {
+                // { "type": "SET_AUTO_RESET", "payload": { "delayMs": 30000 } }
+                // delayMs = 0 → disable auto-reset
+                if (!requireHost(connId, handler)) return;
+                int delayMs = msg.getInt("delayMs", -1);
+                if (delayMs < 0) {
+                    handler.send(OutboundMsg.error("INVALID_DELAY",
+                            "delayMs must be >= 0 (0 = disable auto-reset)").toJson());
+                    return;
+                }
+                _r.setAutoResetDelay(delayMs);
+                break;
+            }
+
             default:
                 handler.send(OutboundMsg.error("UNKNOWN_TYPE",
                         "Unhandled message type: " + msg.getType()).toJson());

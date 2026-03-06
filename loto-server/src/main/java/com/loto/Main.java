@@ -4,6 +4,7 @@ import com.loto.callback.LotoServerCallback;
 import com.loto.core.GameRoom;
 import com.loto.core.LotoServer;
 import com.loto.core.ServerConfig;
+import com.loto.model.BotPlayer;
 import com.loto.model.LotoPage;
 import com.loto.model.Player;
 
@@ -34,6 +35,7 @@ import java.util.Set;
  *   --initial-balance   <long>  Starting balance per player (default: 0)
  *   --persist           <path>  JSON save file path (default: off)
  *   --min-players       <int>   Min players to allow start (default: 1)
+ *   --auto-reset        <int>   Auto-reset delay in ms after game ends (default: 0 = off)
  *
  * Examples:
  *   java -jar loto-server.jar --tcp 9000
@@ -81,6 +83,7 @@ public class Main {
                     case "--persist":           b.persistPath(args[++i]);                         break;
                     case "--min-players":       b.minPlayers(Integer.parseInt(args[++i]));         break;
                     case "--auto-verify":       b.autoVerifyWin(true);                           break;
+                    case "--auto-reset":        b.autoResetDelayMs(Integer.parseInt(args[++i])); break;
 
                     // ── Transport flags ───────────────────────────
                     // --tcp [port]          TCP only, optional port override
@@ -198,9 +201,107 @@ public class Main {
                     }
                     break;
 
+                case "price":
+                    // price          — show current price
+                    // price <amount> — set price per page (only when no pages bought yet)
+                    if (parts.length < 2) {
+                        System.out.printf("  Giá hiện tại: %,d đ/tờ%s%n",
+                                server.getRoom().getCurrentPricePerPage(),
+                                server.getRoom().canChangePricePerPage() ? "" : "  [LOCKED - đã có người mua]");
+                        break;
+                    }
+                    if (!server.getRoom().canChangePricePerPage()) {
+                        System.out.println("  [!] Không thể đổi giá — đã có người mua tờ.");
+                        break;
+                    }
+                    try {
+                        long newPrice = Long.parseLong(parts[1]);
+                        if (newPrice < 0) { System.out.println("  [!] Giá phải >= 0"); break; }
+                        server.getRoom().setPricePerPage(newPrice);
+                        System.out.printf("  [💲] Giá cược → %,d đ/tờ%n", newPrice);
+                    } catch (NumberFormatException e) {
+                        System.out.println("  Usage: price <số tiền>  (e.g. price 20000)");
+                    }
+                    break;
+
+                case "autoreset":
+                    // autoreset        — show current delay
+                    // autoreset <sec>  — set auto-reset delay in seconds (0 = disable)
+                    if (parts.length < 2) {
+                        int cur = server.getRoom().getCurrentAutoResetDelayMs();
+                        if (cur == 0) System.out.println("  Auto-reset: TẮT");
+                        else          System.out.printf("  Auto-reset: %d giây sau khi game kết thúc%n", cur / 1000);
+                        break;
+                    }
+                    try {
+                        int sec = Integer.parseInt(parts[1]);
+                        if (sec < 0) { System.out.println("  [!] Số giây phải >= 0 (0 = tắt)"); break; }
+                        server.getRoom().setAutoResetDelay(sec * 1000);
+                        if (sec == 0) System.out.println("  [⏱] Auto-reset đã TẮT");
+                        else          System.out.printf("  [⏱] Auto-reset → %d giây%n", sec);
+                    } catch (NumberFormatException e) {
+                        System.out.println("  Usage: autoreset <giây>  (e.g. autoreset 30)  |  autoreset 0 = tắt");
+                    }
+                    break;
+
                 case "reset":
                     server.getRoom().reset();
                     System.out.println("  [↺] Room reset. Jackpot đã chia, tờ cũ xóa, balance giữ nguyên.");
+                    break;
+
+                case "bot":
+                    // bot add <name> [maxPages] [balance]
+                    // bot remove <name>
+                    // bot list
+                    if (parts.length < 2) {
+                        System.out.println("  Usage: bot add <name> [maxPages=3] [balance=999999]");
+                        System.out.println("         bot remove <name>");
+                        System.out.println("         bot list");
+                        break;
+                    }
+                    switch (parts[1].toLowerCase()) {
+                        case "add": {
+                            if (parts.length < 3) {
+                                System.out.println("  Usage: bot add <name> [maxPages=3] [balance=999999]");
+                                break;
+                            }
+                            String botName   = parts[2];
+                            int    maxPages  = parts.length > 3 ? Integer.parseInt(parts[3]) : 3;
+                            long   botBal    = parts.length > 4 ? Long.parseLong(parts[4])   : 999_999L;
+                            BotPlayer bot =
+                                    server.getRoom().getBotManager().addBot(botName, botBal, maxPages);
+                            if (bot == null)
+                                System.out.println("  [!] Bot '" + botName + "' đã tồn tại hoặc không thể thêm.");
+                            else
+                                System.out.printf("  [🤖] Bot '%s' đã vào phòng (maxPages=%d, balance=%,d)%n",
+                                        botName, maxPages, botBal);
+                            break;
+                        }
+                        case "remove": {
+                            if (parts.length < 3) { System.out.println("  Usage: bot remove <name>"); break; }
+                            boolean removed = server.getRoom().getBotManager().removeBot(parts[2]);
+                            System.out.println(removed
+                                    ? "  [🤖] Bot '" + parts[2] + "' đã rời phòng."
+                                    : "  [!] Không tìm thấy bot '" + parts[2] + "'.");
+                            break;
+                        }
+                        case "list": {
+                            var botList = server.getRoom().getBotManager().listBots();
+                            if (botList.isEmpty()) {
+                                System.out.println("  (Không có bot nào)");
+                            } else {
+                                System.out.println("  ─── Bots ───────────────────────────────");
+                                for (var b : botList) {
+                                    System.out.printf("  🤖 %-12s  maxPages=%-3d  balance=%,d  tờ=%d%n",
+                                            b.getName(), b.getMaxPages(),
+                                            b.getBalance(), b.getPages().size());
+                                }
+                            }
+                            break;
+                        }
+                        default:
+                            System.out.println("  Usage: bot add|remove|list");
+                    }
                     break;
 
                 case "banip":
@@ -288,6 +389,8 @@ public class Main {
         System.out.printf ("║  Persist path      : %-16s║%n", config.persistPath != null ? config.persistPath : "off");
         System.out.printf ("║  Min players       : %-16d║%n", config.minPlayers);
         System.out.printf ("║  Auto-verify win   : %-16s║%n", config.autoVerifyWin ? "ON" : "OFF");
+        String arLabel = config.autoResetDelayMs > 0 ? config.autoResetDelayMs/1000 + "s" : "off";
+        System.out.printf ("║  Auto-reset delay  : %-16s║%n", arLabel);
         System.out.println("╠══════════════════════════════════════╣");
         System.out.println("║  Type 'help' for commands            ║");
         System.out.println("╚══════════════════════════════════════╝");
@@ -299,6 +402,11 @@ public class Main {
         System.out.println("  end    [reason]                    → server kết thúc game (no winner)");
         System.out.println("  reset                              → reset phòng về WAITING (giữ balance)");
         System.out.println("  speed  [ms]                        → xem / đổi tốc độ rút số (live, min 200ms)");
+        System.out.println("  price  [amount]                    → xem / đổi giá cược/tờ (được khi chưa ai mua)");
+        System.out.println("  autoreset [giây]                   → xem / đặt tự reset sau N giây (0 = tắt)");
+        System.out.println("  bot add <n> [maxTờ] [balance]    → thêm bot (mặc định: maxTờ=3, balance=999999)");
+        System.out.println("  bot remove <n>                     → xóa bot");
+        System.out.println("  bot list                           → xem danh sách bot");
         System.out.println("  topup  <playerId> <amount> [note]  → nạp tiền cho player");
         System.out.println("  confirm <playerId> <pageId>        → xác nhận kình");
         System.out.println("  reject  <playerId> <pageId>        → từ chối kình");
@@ -414,6 +522,19 @@ public class Main {
 
         @Override public void onDrawIntervalChanged(int oldMs, int newMs) {
             System.out.printf("[⚡] Draw interval: %dms → %dms%n", oldMs, newMs);
+        }
+
+        @Override public void onPricePerPageChanged(long oldPrice, long newPrice) {
+            System.out.printf("[💲] Giá cược: %,d → %,d đ/tờ%n", oldPrice, newPrice);
+        }
+
+        @Override public void onAutoResetScheduled(int delayMs) {
+            System.out.printf("[⏱] Auto-reset sau %d giây%n", delayMs / 1000);
+        }
+
+        @Override public void onAutoResetDelayChanged(int oldMs, int newMs) {
+            if (newMs == 0) System.out.println("[⏱] Auto-reset đã tắt");
+            else System.out.printf("[⏱] Auto-reset delay: %ds → %ds%n", oldMs/1000, newMs/1000);
         }
 
         @Override public void onJackpotPaid(java.util.List<String> winnerIds, long prizeEach) {

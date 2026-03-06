@@ -12,6 +12,7 @@ public class PlayerInfo {
     public final String  playerId;
     public final String  name;
     public final boolean isHost;
+    public final boolean isBot;
     public final boolean isConnected;
     public final int     pageCount;
     public final long    balance;
@@ -20,6 +21,7 @@ public class PlayerInfo {
         this.playerId    = player.getId();
         this.name        = player.getName();
         this.isHost      = player.isHost();
+        this.isBot       = player.isBot();
         this.isConnected = player.isConnected();
         this.pageCount   = player.getPages().size();
         this.balance     = player.getBalance();
@@ -30,6 +32,7 @@ public class PlayerInfo {
         obj.put("playerId",    playerId);
         obj.put("name",        name);
         obj.put("isHost",      isHost);
+        obj.put("isBot",       isBot);
         obj.put("isConnected", isConnected);
         obj.put("pageCount",   pageCount);
         obj.put("balance",     balance);

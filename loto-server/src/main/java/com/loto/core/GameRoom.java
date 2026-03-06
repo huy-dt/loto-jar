@@ -1,6 +1,7 @@
 package com.loto.core;
 
 import com.loto.callback.LotoServerCallback;
+import com.loto.model.BotPlayer;
 import com.loto.model.LotoPage;
 import com.loto.model.Player;
 import com.loto.model.PlayerInfo;
@@ -32,6 +33,9 @@ public class GameRoom {
     private final Map<String, Player>          playersByConnId = new ConcurrentHashMap<>();
     private final Map<String, IClientHandler>  handlerByConnId = new ConcurrentHashMap<>();
     private final Map<String, String>          ipByConnId      = new ConcurrentHashMap<>();
+
+    // ─── Bot manager ──────────────────────────────────────────────
+    private       BotManager                   botManager;
     private final Set<String>                  votedPlayerIds  = ConcurrentHashMap.newKeySet();
 
     // ─── Game data ────────────────────────────────────────────────
@@ -57,6 +61,12 @@ public class GameRoom {
     private       ScheduledFuture<?>           saveDebounce;
     /** Current draw interval — can be changed live via setDrawInterval(). */
     private volatile int                       currentDrawIntervalMs;
+    /** Current price per page — can be changed by host when no pages bought yet. */
+    private volatile long                      currentPricePerPage;
+    /** Current auto-reset delay ms — 0 = disabled. Can be changed anytime via setAutoResetDelay(). */
+    private volatile int                       currentAutoResetDelayMs;
+    /** Pending auto-reset task (scheduled after game ENDED/CANCELLED). */
+    private       ScheduledFuture<?>           autoResetTask;
     private static final int                   SAVE_DEBOUNCE_MS = 500;
 
     // ─── Constructor ──────────────────────────────────────────────
@@ -64,12 +74,19 @@ public class GameRoom {
     public GameRoom(String roomId, ServerConfig config) {
         this.roomId = roomId;
         this.config = config;
-        this.currentDrawIntervalMs = config.drawIntervalMs;
+        this.currentDrawIntervalMs  = config.drawIntervalMs;
+        this.currentPricePerPage    = config.pricePerPage;
+        this.currentAutoResetDelayMs = config.autoResetDelayMs;
         buildNumberPool();
     }
 
     public void setCallback(LotoServerCallback callback) {
         this.callback = callback;
+    }
+
+    public BotManager getBotManager() {
+        if (botManager == null) botManager = new BotManager(this);
+        return botManager;
     }
 
 
@@ -89,8 +106,12 @@ public class GameRoom {
         // Restore state
         try { this.state = GameState.valueOf(snap.gameState); }
         catch (Exception e) { this.state = GameState.WAITING; }
-        this.currentDrawIntervalMs = snap.drawIntervalMs > 0
+        this.currentDrawIntervalMs  = snap.drawIntervalMs >= 0
                 ? snap.drawIntervalMs : config.drawIntervalMs;
+        this.currentPricePerPage    = snap.pricePerPage >= 0
+                ? snap.pricePerPage : config.pricePerPage;
+        this.currentAutoResetDelayMs = snap.autoResetDelayMs >= 0
+                ? snap.autoResetDelayMs : config.autoResetDelayMs;
 
         this.jackpot = snap.jackpot;
 
@@ -158,7 +179,9 @@ public class GameRoom {
         snap.drawnNumbers.addAll(drawnNumbers);
         snap.bannedIds.addAll(bannedIds);
         snap.winnerIds.addAll(winnerIds);
-        snap.drawIntervalMs = currentDrawIntervalMs;
+        snap.drawIntervalMs     = currentDrawIntervalMs;
+        snap.pricePerPage       = currentPricePerPage;
+        snap.autoResetDelayMs   = currentAutoResetDelayMs;
 
         for (Player p : playersByToken.values()) {
             JsonPersistence.PlayerSnapshot ps = new JsonPersistence.PlayerSnapshot();
@@ -215,6 +238,81 @@ public class GameRoom {
         if (callback != null) callback.onPlayerJoined(player);
         saveState();
         return player;
+    }
+
+    // ─── Bot join / remove ────────────────────────────────────────
+
+    /**
+     * Joins a pre-constructed BotPlayer into the room.
+     * Skips ban checks and normal welcome flow — broadcasts PLAYER_JOINED + ROOM_UPDATE.
+     */
+    public synchronized Player joinBot(String connId, BotPlayer bot, IClientHandler handler) {
+        playersByToken.put(bot.getToken(), bot);
+        playersByConnId.put(connId, bot);
+        handlerByConnId.put(connId, handler);
+        ipByConnId.put(connId, "bot");
+
+        broadcast(OutboundMsg.playerJoined(bot.getId(), bot.getName(), false).toJson(), null);
+        broadcastRoomUpdate();
+
+        if (callback != null) callback.onPlayerJoined(bot);
+        saveState();
+        return bot;
+    }
+
+    /**
+     * Removes a bot from the room silently — broadcasts PLAYER_LEFT + ROOM_UPDATE.
+     * Does NOT refund pages (bot money doesn't matter).
+     */
+    public synchronized void removeBot(String connId, BotPlayer bot) {
+        playersByToken.remove(bot.getToken());
+        playersByConnId.remove(connId);
+        handlerByConnId.remove(connId);
+        ipByConnId.remove(connId);
+
+        broadcast(OutboundMsg.playerLeft(bot.getId()).toJson(), null);
+        broadcastRoomUpdate();
+        saveState();
+    }
+
+    /**
+     * Bot buys pages — same logic as buyPages() but bypasses the balance check
+     * (bots always have enough; host sets their balance on addBot).
+     */
+    public synchronized void buyPagesBot(String connId, int count) {
+        Player player = playersByConnId.get(connId);
+        if (!(player instanceof BotPlayer)) return;
+        if (state != GameState.WAITING && state != GameState.VOTING) return;
+
+        count = Math.min(count, config.maxPagesPerBuy);
+        long totalCost = currentPricePerPage * count;
+
+        // Bots still pay from their balance if they have it, otherwise buy for free
+        List<LotoPage> newPages = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            newPages.add(new LotoPage(pageIdCounter.getAndIncrement()));
+        }
+        player.addPages(newPages);
+
+        if (currentPricePerPage > 0 && player.getBalance() >= totalCost) {
+            player.deduct(totalCost,
+                String.format("Bot mua %d tờ × %,d", count, currentPricePerPage));
+            jackpot += totalCost;
+        }
+
+        broadcastRoomUpdate();
+        System.out.printf("[BOT] %s mua %d tờ%n", player.getName(), count);
+        if (callback != null) callback.onPagesBought(player, newPages);
+        saveState();
+    }
+
+    /**
+     * Bot claims a win — same as claimWin() but identified as a bot action.
+     */
+    public synchronized void claimWinBot(String connId, int pageId) {
+        Player player = playersByConnId.get(connId);
+        if (!(player instanceof BotPlayer)) return;
+        claimWin(connId, pageId);
     }
 
     public synchronized Player reconnect(String connId, String token, IClientHandler handler) {
@@ -280,10 +378,10 @@ public class GameRoom {
         }
 
         count = Math.min(count, config.maxPagesPerBuy);
-        long totalCost = config.pricePerPage * count;
+        long totalCost = currentPricePerPage * count;
 
         // Check balance
-        if (config.pricePerPage > 0 && player.getBalance() < totalCost) {
+        if (currentPricePerPage > 0 && player.getBalance() < totalCost) {
             sendTo(connId, OutboundMsg.error(
                     "INSUFFICIENT_BALANCE",
                     String.format("Need %d, have %d", totalCost, player.getBalance())).toJson());
@@ -300,9 +398,9 @@ public class GameRoom {
         player.addPages(newPages);
 
         // Deduct balance & update jackpot
-        if (config.pricePerPage > 0) {
+        if (currentPricePerPage > 0) {
             player.deduct(totalCost,
-                String.format("Mua %d tờ × %d", count, config.pricePerPage));
+                String.format("Mua %d tờ × %d", count, currentPricePerPage));
             jackpot += totalCost;
         }
 
@@ -343,6 +441,9 @@ public class GameRoom {
         broadcastRoomUpdate();
         if (callback != null) callback.onGameStarting();
 
+        // Notify bots to buy pages
+        if (botManager != null) botManager.onGameStarted();
+
         drawTask = scheduler.scheduleAtFixedRate(
                 this::drawNextNumber,
                 currentDrawIntervalMs,
@@ -360,6 +461,8 @@ public class GameRoom {
             broadcastRoomUpdate();
             saveState();
             if (callback != null) callback.onServerGameEnded("Hết 90 số — không có người thắng");
+            // Auto-reset if configured
+            if (currentAutoResetDelayMs > 0) scheduleAutoReset(currentAutoResetDelayMs);
             return;
         }
         int number = numberPool.remove(numberPool.size() - 1);
@@ -367,6 +470,9 @@ public class GameRoom {
 
         broadcast(OutboundMsg.numberDrawn(number, new ArrayList<>(drawnNumbers)).toJson(), null);
         if (callback != null) callback.onNumberDrawn(number, new ArrayList<>(drawnNumbers));
+
+        // Let bots check their pages
+        if (botManager != null) botManager.onNumberDrawn(new ArrayList<>(drawnNumbers));
     }
 
     // ─── Win claim ────────────────────────────────────────────────
@@ -443,6 +549,11 @@ public class GameRoom {
             if (winnerIds.size() == 1) callback.onGameEnded(player, 0);
         }
         saveStateNow();
+
+        // Auto-reset if configured (only on first winner — when game transitions to ENDED)
+        if (winnerIds.size() == 1 && currentAutoResetDelayMs > 0) {
+            scheduleAutoReset(currentAutoResetDelayMs);
+        }
     }
 
     public synchronized void rejectWin(String playerId, int pageId) {
@@ -472,7 +583,7 @@ public class GameRoom {
 
         // Refund pages if game not started
         if (state == GameState.WAITING || state == GameState.VOTING) {
-            long refund = (long) player.getPages().size() * config.pricePerPage;
+            long refund = (long) player.getPages().size() * currentPricePerPage;
             if (refund > 0) {
                 player.refund(refund, "Hoàn tiền do bị kick");
                 jackpot = Math.max(0, jackpot - refund);
@@ -583,16 +694,18 @@ public class GameRoom {
      */
     public synchronized void reset() {
         stopDrawing();
+        cancelAutoReset();   // cancel any pending auto-reset timer
 
         // ── Pay out jackpot to all confirmed winners ──────────────
-        long prizeEach = 0;
-        if (!winnerIds.isEmpty() && jackpot > 0) {
-            prizeEach = jackpot / winnerIds.size();   // equal split
+        long prizeEach   = 0;
+        int  winnerCount = winnerIds.size();
+        if (winnerCount > 0 && jackpot > 0) {
+            prizeEach = jackpot / winnerCount;
             for (String wid : winnerIds) {
                 Player w = findPlayerById(wid);
                 if (w == null) continue;
                 w.addPrize(prizeEach,
-                    String.format("Jackpot chia %d người: %,d", winnerIds.size(), prizeEach));
+                    String.format("Jackpot chia %d người: %,d", winnerCount, prizeEach));
                 String wConnId = getConnIdForPlayer(w);
                 if (wConnId != null) sendBalanceUpdate(wConnId, w);
             }
@@ -608,18 +721,20 @@ public class GameRoom {
         votedPlayerIds.clear();
         pageIdCounter.set(1);
         winnerIds.clear();
-        currentDrawIntervalMs = config.drawIntervalMs;  // restore default on reset
+        // currentDrawIntervalMs, currentPricePerPage, currentAutoResetDelayMs
+        // đều là cài đặt phòng — GIỮ NGUYÊN qua các ván
 
         // Clear each player's pages (balance stays)
         for (Player p : playersByToken.values()) {
             p.clearPages();
         }
 
-        broadcast(OutboundMsg.roomReset(prizeEach, winnerIds.size()).toJson(), null);
+        broadcast(OutboundMsg.roomReset(prizeEach, winnerCount).toJson(), null);
         broadcastRoomUpdate();
         saveStateNow();
 
         if (callback != null) callback.onRoomReset();
+        if (botManager != null) botManager.onRoomReset();
     }
 
     // ─── Server-controlled game flow ──────────────────────────────
@@ -655,6 +770,9 @@ public class GameRoom {
         broadcastRoomUpdate();
 
         if (callback != null) callback.onServerGameEnded(msg);
+
+        // Auto-reset if configured
+        if (currentAutoResetDelayMs > 0) scheduleAutoReset(currentAutoResetDelayMs);
     }
 
     /**
@@ -701,6 +819,94 @@ public class GameRoom {
 
     public int getCurrentDrawIntervalMs() { return currentDrawIntervalMs; }
 
+    // ─── Live price control ───────────────────────────────────────
+
+    /**
+     * Changes the price per page.
+     * Allowed whenever NO player has bought any page yet (jackpot == 0),
+     * regardless of game state. Once the first page is purchased the price is locked.
+     * Broadcasts PRICE_PER_PAGE_CHANGED to all clients.
+     *
+     * @param newPrice new price in đồng (must be >= 0)
+     */
+    public synchronized void setPricePerPage(long newPrice) {
+        if (newPrice < 0) newPrice = 0;
+        // Lock price once any page has been purchased (jackpot > 0 means money was collected)
+        if (jackpot > 0) {
+            // Already have purchases — reject silently (caller should check first)
+            return;
+        }
+        long old = currentPricePerPage;
+        currentPricePerPage = newPrice;
+        broadcast(OutboundMsg.pricePerPageChanged(newPrice).toJson(), null);
+        saveState();
+        if (callback != null) callback.onPricePerPageChanged(old, newPrice);
+    }
+
+    /** Returns true if the price per page can still be changed (no pages bought yet). */
+    public boolean canChangePricePerPage() { return jackpot == 0; }
+
+    public long getCurrentPricePerPage() { return currentPricePerPage; }
+
+    // ─── Auto-reset scheduling ────────────────────────────────────
+
+    /**
+     * Sets the auto-reset delay at runtime — can be called at any time, even mid-game.
+     * <ul>
+     *   <li>{@code delayMs == 0}: disables auto-reset and cancels any pending timer.</li>
+     *   <li>Game already ENDED: cancels old timer and starts a new one with the new delay.</li>
+     *   <li>Game still running: saves new value; timer activates when the game ends.</li>
+     * </ul>
+     * Broadcasts AUTO_RESET_SCHEDULED (with delayMs=0 to signal cancellation).
+     */
+    public synchronized void setAutoResetDelay(int delayMs) {
+        if (delayMs < 0) delayMs = 0;
+        int old = currentAutoResetDelayMs;
+        currentAutoResetDelayMs = delayMs;
+        saveState();
+        if (callback != null) callback.onAutoResetDelayChanged(old, delayMs);
+
+        if (delayMs == 0) {
+            cancelAutoReset();
+            broadcast(OutboundMsg.autoResetScheduled(0).toJson(), null);
+        } else if (state == GameState.ENDED) {
+            // Game already over — apply immediately
+            scheduleAutoReset(delayMs);
+        } else {
+            // Not ended yet — just announce the upcoming delay
+            broadcast(OutboundMsg.autoResetScheduled(delayMs).toJson(), null);
+        }
+    }
+
+    public int getCurrentAutoResetDelayMs() { return currentAutoResetDelayMs; }
+
+    /**
+     * Schedules an automatic room reset after {@code delayMs} milliseconds.
+     * Cancels any previously scheduled auto-reset.
+     * Broadcasts AUTO_RESET_SCHEDULED so clients can show a countdown.
+     * If delayMs is 0 resets immediately.
+     */
+    public synchronized void scheduleAutoReset(int delayMs) {
+        cancelAutoReset();
+        broadcast(OutboundMsg.autoResetScheduled(delayMs).toJson(), null);
+        if (callback != null) callback.onAutoResetScheduled(delayMs);
+        if (delayMs <= 0) {
+            reset();
+            return;
+        }
+        autoResetTask = scheduler.schedule(() -> {
+            synchronized (GameRoom.this) { reset(); }
+        }, delayMs, TimeUnit.MILLISECONDS);
+    }
+
+    /** Cancels a pending auto-reset without resetting the room. */
+    public synchronized void cancelAutoReset() {
+        if (autoResetTask != null && !autoResetTask.isDone()) {
+            autoResetTask.cancel(false);
+            autoResetTask = null;
+        }
+    }
+
     // ─── Cancel game — refund all ─────────────────────────────────
 
     /**
@@ -718,10 +924,10 @@ public class GameRoom {
         // Refund each player proportionally (pages bought × pricePerPage)
         for (Player player : playersByToken.values()) {
             int   pageCount   = player.getPages().size();
-            long  refundAmt   = pageCount * config.pricePerPage;
+            long  refundAmt   = pageCount * currentPricePerPage;
             if (refundAmt > 0) {
                 player.refund(refundAmt,
-                    String.format("Hoàn tiền — game hủy (%d tờ × %d)", pageCount, config.pricePerPage));
+                    String.format("Hoàn tiền — game hủy (%d tờ × %d)", pageCount, currentPricePerPage));
                 totalRefunded += refundAmt;
 
                 // Notify player of new balance
@@ -736,6 +942,9 @@ public class GameRoom {
 
         if (callback != null) callback.onGameCancelled(reason, totalRefunded);
         saveStateNow();
+
+        // Auto-reset if configured
+        if (currentAutoResetDelayMs > 0) scheduleAutoReset(currentAutoResetDelayMs);
     }
 
     // ─── Wallet history (on demand) ───────────────────────────────
@@ -756,7 +965,9 @@ public class GameRoom {
         List<PlayerInfo> snapshot = playersByToken.values().stream()
                 .map(PlayerInfo::new)
                 .collect(Collectors.toList());
-        broadcast(OutboundMsg.roomUpdate(snapshot, state.name()).toJson(), null);
+        String json = OutboundMsg.roomUpdate(snapshot, state.name(),
+                currentPricePerPage, currentAutoResetDelayMs).toJson();
+        broadcast(json, null);
     }
 
     public synchronized List<PlayerInfo> getRoomSnapshot() {
@@ -844,6 +1055,7 @@ public class GameRoom {
 
     public void shutdown() {
         stopDrawing();
+        if (botManager != null) botManager.shutdown();
         scheduler.shutdownNow();
     }
 }

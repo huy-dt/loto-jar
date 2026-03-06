@@ -34,9 +34,9 @@ public class Main {
     private static LotoClient client;
 
     public static void main(String[] args) throws Exception {
-        // Force UTF-8 output on Windows
-        System.setOut(new java.io.PrintStream(System.out, true, "UTF-8"));
-        System.setErr(new java.io.PrintStream(System.err, true, "UTF-8"));
+        // // Force UTF-8 output on Windows
+        // System.setOut(new java.io.PrintStream(System.out, true, "UTF-8"));
+        // System.setErr(new java.io.PrintStream(System.err, true, "UTF-8"));
 
         String  host       = "localhost";
         int     port       = 9000;
@@ -86,7 +86,8 @@ public class Main {
         // Build WS URL from parts if not given as full URL
         if (wsUrl == null && wsHost != null) {
             int wp = wsPort > 0 ? wsPort : (port > 0 ? port : 9001);
-            wsUrl = "ws://" + wsHost + ":" + wp;
+            // wsUrl = "ws://" + wsHost + ":" + wp;
+            wsUrl = "ws://" + wsHost;
         } else if (wsUrl == null && wsPort > 0) {
             wsUrl = "ws://" + host + ":" + wsPort;
         }

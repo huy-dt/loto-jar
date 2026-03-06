@@ -102,4 +102,25 @@ public interface LotoServerCallback {
      * @param newMs new interval in ms
      */
     void onDrawIntervalChanged(int oldMs, int newMs);
+
+    /**
+     * Price per page was changed by host (via {@code setPricePerPage()} or SET_PRICE_PER_PAGE message).
+     * Only fires when game is in WAITING state.
+     * @param oldPrice previous price
+     * @param newPrice new price
+     */
+    void onPricePerPageChanged(long oldPrice, long newPrice);
+
+    /**
+     * Auto-reset delay was changed at runtime via {@code setAutoResetDelay()}.
+     * @param oldMs previous delay (0 = was disabled)
+     * @param newMs new delay (0 = now disabled)
+     */
+    void onAutoResetDelayChanged(int oldMs, int newMs);
+
+    /**
+     * An auto-reset has been scheduled.
+     * @param delayMs milliseconds until the room resets automatically
+     */
+    void onAutoResetScheduled(int delayMs);
 }
