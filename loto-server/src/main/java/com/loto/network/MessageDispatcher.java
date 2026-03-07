@@ -276,6 +276,54 @@ public class MessageDispatcher {
                 break;
             }
 
+            case SERVER_START: {
+                if (!requireAdmin(connId, _r, handler)) return;
+                _r.serverStart();
+                break;
+            }
+
+            case SERVER_END: {
+                if (!requireAdmin(connId, _r, handler)) return;
+                String reason = msg.getString("reason");
+                _r.serverEnd(reason != null ? reason : "Admin kết thúc game");
+                break;
+            }
+
+            case RESET_ROOM: {
+                if (!requireAdmin(connId, _r, handler)) return;
+                _r.reset();
+                break;
+            }
+
+            case BAN_IP: {
+                if (!requireAdmin(connId, _r, handler)) return;
+                String ip = msg.getString("ip");
+                if (ip == null || ip.trim().isEmpty()) {
+                    handler.send(OutboundMsg.error("MISSING_FIELDS", "ip required").toJson());
+                    return;
+                }
+                _r.banIp(ip.trim());
+                break;
+            }
+
+            case UNBAN_IP: {
+                if (!requireAdmin(connId, _r, handler)) return;
+                String ip = msg.getString("ip");
+                if (ip == null || ip.trim().isEmpty()) {
+                    handler.send(OutboundMsg.error("MISSING_FIELDS", "ip required").toJson());
+                    return;
+                }
+                _r.unbanIp(ip.trim());
+                break;
+            }
+
+            case GET_BAN_LIST: {
+                if (!requireAdmin(connId, _r, handler)) return;
+                handler.send(OutboundMsg.banList(
+                        _r.getBannedIds(), _r.getBannedIps()).toJson());
+                break;
+            }
+
             case GET_WALLET: {
                 if (_r == null) { handler.send(OutboundMsg.error("NO_ROOM", "Not in a room").toJson()); return; }
                 _r.sendWalletHistory(connId);

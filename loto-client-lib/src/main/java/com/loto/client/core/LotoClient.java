@@ -17,7 +17,7 @@ import java.util.*;
 import java.util.concurrent.*;
 
 /**
- * Main client entry point.
+ * Main client entry point — supports TCP and WebSocket transports.
  *
  * <pre>
  * // TCP
@@ -36,32 +36,37 @@ import java.util.concurrent.*;
  * new Thread(client::connect).start();
  * </pre>
  *
- * <p><b>Android:</b> call {@code connect()} on a background thread (e.g. via
- * {@code Executors.newSingleThreadExecutor()}). All callbacks fire on the
- * network thread — marshal to UI thread with {@code runOnUiThread()} as needed.
+ * <p><b>Android:</b> call {@code connect()} on a background thread.
+ * All callbacks fire on the network thread — marshal to UI with {@code runOnUiThread()}.
  */
 public class LotoClient {
 
     // ── Config ────────────────────────────────────────────────────
     private final String               host;
     private final int                  port;
-    private final String               wsUrl;          // null = TCP mode
-    private final String               roomId;         // null = single-room server
+    private final String               wsUrl;
+    private final String               roomId;
     private final String               playerName;
     private final boolean              autoReconnect;
     private final int                  reconnectDelayMs;
     private final int                  maxReconnectAttempts;
     private final boolean              autoClaimOnWin;
     private final LotoClientCallback   callback;
+    private final String               initialToken;     // null = fresh JOIN, non-null = RECONNECT ngay từ đầu
 
     // ── State ─────────────────────────────────────────────────────
-    private volatile ClientState       state        = ClientState.DISCONNECTED;
+    private volatile ClientState       state                 = ClientState.DISCONNECTED;
     private volatile String            playerId;
     private volatile String            token;
     private volatile boolean           isHost;
+    private volatile boolean           isAdmin;
+    private volatile boolean           isPaused;
+    private volatile String            currentGameState      = "WAITING";
+    private volatile int               voteCount;
+    private volatile int               voteNeeded;
     private volatile int               currentDrawIntervalMs;
     private volatile long              currentPricePerPage;
-    private volatile long              pendingPricePerPage  = -1;
+    private volatile long              pendingPricePerPage   = -1;
     private volatile int               currentAutoResetDelayMs;
     private volatile int               currentAutoStartDelayMs;
 
@@ -86,12 +91,16 @@ public class LotoClient {
         this.maxReconnectAttempts = b.maxReconnectAttempts;
         this.autoClaimOnWin       = b.autoClaimOnWin;
         this.callback             = b.callback;
+        this.initialToken         = b.initialToken;
+        // Nếu có token truyền vào → gửi RECONNECT ngay từ lần connect đầu tiên
+        if (b.initialToken != null) this.token = b.initialToken;
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────
 
     /**
      * Connects to the server and blocks on the read loop.
+     * Automatically sends RECONNECT if a token is held from a prior session.
      * Run this on a background thread.
      */
     public void connect() {
@@ -109,7 +118,7 @@ public class LotoClient {
                 setState(ClientState.CONNECTED);
                 if (callback != null) callback.onConnected();
 
-                // JOIN or RECONNECT
+                // JOIN or RECONNECT depending on whether we have a token
                 if (token != null) {
                     conn.send(ClientMsgBuilder.reconnect(token));
                 } else {
@@ -138,8 +147,12 @@ public class LotoClient {
         }
     }
 
+    /**
+     * Disconnects and clears the reconnect token so the next {@code connect()} does a fresh JOIN.
+     */
     public void disconnect() {
         running = false;
+        token   = null;
         if (connection != null) connection.close();
     }
 
@@ -156,79 +169,89 @@ public class LotoClient {
 
     // ── Public actions — all players ──────────────────────────────
 
-    public void buyPages(int count)        { send(ClientMsgBuilder.buyPage(count)); }
-    public void voteStart()                { send(ClientMsgBuilder.voteStart()); }
-    public void claimWin(int pageId)       { send(ClientMsgBuilder.claimWin(pageId)); }
-    public void requestWalletHistory()     { send(ClientMsgBuilder.getWallet()); }
+    public void buyPages(int count)    { send(ClientMsgBuilder.buyPage(count)); }
+    public void voteStart()            { send(ClientMsgBuilder.voteStart()); }
+    public void claimWin(int pageId)   { send(ClientMsgBuilder.claimWin(pageId)); }
+    public void requestWalletHistory() { send(ClientMsgBuilder.getWallet()); }
 
-    // ── Host-only actions ─────────────────────────────────────────
-
-    public void confirmWin(String playerId, int pageId) {
-        send(ClientMsgBuilder.confirmWin(playerId, pageId));
-    }
-    public void rejectWin(String playerId, int pageId) {
-        send(ClientMsgBuilder.rejectWin(playerId, pageId));
-    }
-    public void topUp(String playerId, long amount, String note) {
-        send(ClientMsgBuilder.topUp(playerId, amount, note));
-    }
-    public void cancelGame(String reason)  { send(ClientMsgBuilder.cancelGame(reason)); }
-    public void kick(String playerId, String reason) {
-        send(ClientMsgBuilder.kick(playerId, reason));
-    }
-    public void ban(String playerId, String reason) {
-        send(ClientMsgBuilder.ban(playerId, reason));
-    }
-    public void unban(String name)         { send(ClientMsgBuilder.unban(name)); }
+    // ── Admin authentication ──────────────────────────────────────
 
     /**
-     * Change draw speed live — host only.
-     * @param intervalMs milliseconds between numbers (min 200)
+     * Authenticate as admin using the server's secret token.
+     * Server responds with {@code ADMIN_AUTH_OK}; {@code onAdminAuthOk()} fires.
+     *
+     * @param adminToken the token shown in the server banner at startup
      */
-    public void setDrawInterval(int intervalMs) {
-        send(ClientMsgBuilder.setDrawInterval(intervalMs));
+    public void adminAuth(String adminToken) {
+        send(ClientMsgBuilder.adminAuth(adminToken));
     }
 
-    /**
-     * Change price per page — host only.
-     * Only accepted by server while jackpot == 0 (no pages bought yet).
-     * @param price new price in đồng (>= 0)
-     */
-    public void setPricePerPage(long price) {
-        send(ClientMsgBuilder.setPricePerPage(price));
-    }
+    // ── Admin-only actions ────────────────────────────────────────
 
-    /**
-     * Set auto-reset delay after game ends — host only.
-     * @param delayMs milliseconds (0 = disable)
-     */
-    public void setAutoReset(int delayMs) {
-        send(ClientMsgBuilder.setAutoReset(delayMs));
-    }
+    public void confirmWin(String playerId, int pageId) { send(ClientMsgBuilder.confirmWin(playerId, pageId)); }
+    public void rejectWin(String playerId, int pageId)  { send(ClientMsgBuilder.rejectWin(playerId, pageId)); }
+    public void topUp(String playerId, long amount, String note) { send(ClientMsgBuilder.topUp(playerId, amount, note)); }
+    public void cancelGame(String reason)               { send(ClientMsgBuilder.cancelGame(reason)); }
+    public void kick(String playerId, String reason)    { send(ClientMsgBuilder.kick(playerId, reason)); }
+    public void ban(String playerId, String reason)     { send(ClientMsgBuilder.ban(playerId, reason)); }
+    public void unban(String name)                      { send(ClientMsgBuilder.unban(name)); }
 
-    /**
-     * Set auto-start delay — host only.
-     * Game starts automatically after N ms when a real player buys a page.
-     * @param delayMs milliseconds (0 = disable)
-     */
-    public void setAutoStart(int delayMs) {
-        send(ClientMsgBuilder.setAutoStart(delayMs));
-    }
+    /** Pause the draw loop mid-game — admin only. */
+    public void pauseGame()                             { send(ClientMsgBuilder.pauseGame()); }
+
+    /** Resume a paused game — admin only. */
+    public void resumeGame()                            { send(ClientMsgBuilder.resumeGame()); }
+
+    /** Change draw speed live — admin only. @param intervalMs min 200 */
+    public void setDrawInterval(int intervalMs)         { send(ClientMsgBuilder.setDrawInterval(intervalMs)); }
+
+    /** Change price per page — admin only. Only when no pages bought yet. */
+    public void setPricePerPage(long price)             { send(ClientMsgBuilder.setPricePerPage(price)); }
+
+    /** Set auto-reset delay — admin only. @param delayMs 0 = disable */
+    public void setAutoReset(int delayMs)               { send(ClientMsgBuilder.setAutoReset(delayMs)); }
+
+    /** Set auto-start delay — admin only. @param delayMs 0 = disable */
+    public void setAutoStart(int delayMs)               { send(ClientMsgBuilder.setAutoStart(delayMs)); }
+
+    /** Start game ngay — bypass vote. Admin only. */
+    public void serverStart()                           { send(ClientMsgBuilder.serverStart()); }
+
+    /** Kết thúc game không có winner. Admin only. */
+    public void serverEnd(String reason)                { send(ClientMsgBuilder.serverEnd(reason)); }
+
+    /** Reset phòng về WAITING, chia jackpot cho winner hiện tại. Admin only. */
+    public void resetRoom()                             { send(ClientMsgBuilder.resetRoom()); }
+
+    /** Cấm kết nối từ IP này. Admin only. */
+    public void banIp(String ip)                        { send(ClientMsgBuilder.banIp(ip)); }
+
+    /** Gỡ cấm IP. Admin only. */
+    public void unbanIp(String ip)                      { send(ClientMsgBuilder.unbanIp(ip)); }
+
+    /** Lấy danh sách tên + IP đang bị cấm. Server trả về onBanList(). Admin only. */
+    public void getBanList()                            { send(ClientMsgBuilder.getBanList()); }
 
     // ── State accessors ───────────────────────────────────────────
 
-    public ClientState       getState()                  { return state; }
-    public String            getPlayerId()               { return playerId; }
-    public boolean           isHost()                    { return isHost; }
-    public int               getCurrentDrawIntervalMs()  { return currentDrawIntervalMs; }
-    public long              getCurrentPricePerPage()    { return currentPricePerPage; }
-    /** Pending price — set during PLAYING, applies from next game. -1 = none. */
-    public long              getPendingPricePerPage()    { return pendingPricePerPage; }
-    public int               getCurrentAutoResetDelayMs(){ return currentAutoResetDelayMs; }
-    public int               getCurrentAutoStartDelayMs(){ return currentAutoStartDelayMs; }
-    public List<ClientPage>  getPages()                  { return Collections.unmodifiableList(pages); }
-    public List<Integer>     getDrawnNumbers()           { return Collections.unmodifiableList(drawnNumbers); }
-    public WalletInfo        getWallet()                 { return wallet; }
+    public ClientState       getState()                   { return state; }
+    public String            getPlayerId()                { return playerId; }
+    public String            getPlayerName()              { return playerName; }
+    public boolean           isHost()                     { return isHost; }
+    public boolean           isAdmin()                    { return isAdmin; }
+    public boolean           isPaused()                   { return isPaused; }
+    public String            getCurrentGameState()        { return currentGameState; }
+    public int               getVoteCount()               { return voteCount; }
+    public int               getVoteNeeded()              { return voteNeeded; }
+    public int               getCurrentDrawIntervalMs()   { return currentDrawIntervalMs; }
+    public long              getCurrentPricePerPage()     { return currentPricePerPage; }
+    /** Pending price set during PLAYING — applies next game. -1 = none. */
+    public long              getPendingPricePerPage()     { return pendingPricePerPage; }
+    public int               getCurrentAutoResetDelayMs() { return currentAutoResetDelayMs; }
+    public int               getCurrentAutoStartDelayMs() { return currentAutoStartDelayMs; }
+    public List<ClientPage>  getPages()                   { return Collections.unmodifiableList(pages); }
+    public List<Integer>     getDrawnNumbers()            { return Collections.unmodifiableList(drawnNumbers); }
+    public WalletInfo        getWallet()                  { return wallet; }
 
     // ── Message dispatcher ────────────────────────────────────────
 
@@ -240,8 +263,8 @@ public class LotoClient {
             if (payload == null) payload = new JSONObject();
 
             switch (type) {
-                case "WELCOME":              handleWelcome(payload);         break;
-                case "ROOM_UPDATE":          handleRoomUpdate(payload);      break;
+                case "WELCOME":           handleWelcome(payload);       break;
+                case "ROOM_UPDATE":       handleRoomUpdate(payload);    break;
                 case "PLAYER_JOINED":
                     if (callback != null)
                         callback.onPlayerJoined(
@@ -253,15 +276,16 @@ public class LotoClient {
                     if (callback != null)
                         callback.onPlayerLeft(payload.getString("playerId"));
                     break;
-                case "PAGES_ASSIGNED":       handlePagesAssigned(payload);   break;
+                case "PAGES_ASSIGNED":    handlePagesAssigned(payload); break;
                 case "VOTE_UPDATE":
-                    if (callback != null)
-                        callback.onVoteUpdate(
-                                payload.getInt("voteCount"),
-                                payload.getInt("needed"));
+                    voteCount  = payload.getInt("voteCount");
+                    voteNeeded = payload.getInt("needed");
+                    if (callback != null) callback.onVoteUpdate(voteCount, voteNeeded);
                     break;
                 case "GAME_STARTING":
                     currentDrawIntervalMs = payload.optInt("drawIntervalMs", 5000);
+                    currentGameState      = "PLAYING";
+                    isPaused              = false;
                     setState(ClientState.IN_GAME);
                     if (callback != null) callback.onGameStarting(currentDrawIntervalMs);
                     break;
@@ -270,8 +294,10 @@ public class LotoClient {
                     if (callback != null) callback.onDrawIntervalChanged(currentDrawIntervalMs);
                     break;
                 case "PRICE_PER_PAGE_CHANGED":
-                    currentPricePerPage  = payload.optLong("price", currentPricePerPage);
-                    pendingPricePerPage  = payload.optLong("pendingPrice", -1);
+                    // Server field is "pricePerPage" — fall back to "price" for compatibility
+                    currentPricePerPage = payload.optLong("pricePerPage",
+                                         payload.optLong("price", currentPricePerPage));
+                    pendingPricePerPage = payload.optLong("pendingPrice", -1);
                     if (callback != null) callback.onPricePerPageChanged(currentPricePerPage);
                     break;
                 case "AUTO_RESET_SCHEDULED":
@@ -283,12 +309,15 @@ public class LotoClient {
                     if (callback != null) callback.onAutoStartScheduled(currentAutoStartDelayMs);
                     break;
                 case "GAME_PAUSED":
+                    isPaused = true;
                     if (callback != null) callback.onGamePaused();
                     break;
                 case "GAME_RESUMED":
+                    isPaused              = false;
+                    currentDrawIntervalMs = payload.optInt("drawIntervalMs", currentDrawIntervalMs);
                     if (callback != null) callback.onGameResumed();
                     break;
-                case "NUMBER_DRAWN":         handleNumberDrawn(payload);     break;
+                case "NUMBER_DRAWN":      handleNumberDrawn(payload);   break;
                 case "CLAIM_RECEIVED":
                     if (callback != null)
                         callback.onClaimReceived(
@@ -310,37 +339,45 @@ public class LotoClient {
                                 payload.getInt("pageId"));
                     break;
                 case "GAME_ENDED":
-                    // Draw stopped — others can still claim until ROOM_RESET
+                    currentGameState = "ENDED";
                     if (callback != null)
                         callback.onGameEnded(
                                 payload.optString("winnerPlayerId", ""),
                                 payload.optString("winnerName", ""));
                     break;
                 case "GAME_ENDED_BY_SERVER":
+                    currentGameState = "ENDED";
                     if (callback != null)
                         callback.onGameEndedByServer(payload.optString("reason", ""));
                     break;
-                case "ROOM_RESET":
-                    // Jackpot paid, pages cleared — back to WAITING
-                    handleRoomReset(payload);
-                    break;
+                case "ROOM_RESET":        handleRoomReset(payload);     break;
                 case "GAME_CANCELLED":
+                    currentGameState    = "WAITING";
                     drawnNumbers.clear();
                     pages.clear();
                     pendingPricePerPage = -1;
-                    // State stays IN_GAME (still connected, room goes back to WAITING)
+                    isPaused            = false;
+                    voteCount           = 0;
+                    voteNeeded          = 0;
                     if (callback != null)
                         callback.onGameCancelled(payload.optString("reason", ""));
                     break;
-                case "BALANCE_UPDATE":       handleBalanceUpdate(payload);   break;
-                case "WALLET_HISTORY":       handleWalletHistory(payload);   break;
+                case "ADMIN_AUTH_OK":
+                    isAdmin = true;
+                    if (callback != null) callback.onAdminAuthOk();
+                    break;
+                case "BAN_LIST":          handleBanList(payload);       break;
+                case "BALANCE_UPDATE":    handleBalanceUpdate(payload); break;
+                case "WALLET_HISTORY":    handleWalletHistory(payload); break;
                 case "KICKED":
                     running = false;
+                    token   = null;
                     if (connection != null) connection.close();
                     if (callback != null) callback.onKicked(payload.optString("reason", ""));
                     break;
                 case "BANNED":
                     running = false;
+                    token   = null;
                     if (connection != null) connection.close();
                     if (callback != null) callback.onBanned(payload.optString("reason", ""));
                     break;
@@ -359,13 +396,29 @@ public class LotoClient {
         }
     }
 
-    // ── Specific handlers ─────────────────────────────────────────
+    // ── Message handlers ──────────────────────────────────────────
 
     private void handleWelcome(JSONObject p) {
         playerId = p.getString("playerId");
         token    = p.getString("token");
         isHost   = p.optBoolean("isHost", false);
 
+        // ── Restore drawnNumbers FIRST — pages need them for markAll() ──
+        JSONArray drawnArr = p.optJSONArray("drawnNumbers");
+        if (drawnArr != null) {
+            drawnNumbers.clear();
+            for (int i = 0; i < drawnArr.length(); i++) drawnNumbers.add(drawnArr.getInt(i));
+        }
+
+        // Restore room settings included in full-state WELCOME
+        if (p.has("drawIntervalMs"))  currentDrawIntervalMs   = p.getInt("drawIntervalMs");
+        if (p.has("pricePerPage"))    currentPricePerPage     = p.getLong("pricePerPage");
+        if (p.has("isPaused"))        isPaused                = p.getBoolean("isPaused");
+        voteCount        = p.optInt("voteCount", 0);
+        voteNeeded       = p.optInt("voteNeeded", 0);
+        currentGameState = p.optString("gameState", "WAITING");
+
+        // Restore own pages — drawnNumbers already populated above
         pages.clear();
         JSONArray pagesArr = p.optJSONArray("pages");
         if (pagesArr != null) {
@@ -379,38 +432,32 @@ public class LotoClient {
         }
 
         setState(ClientState.IN_GAME);
-        boolean wasReconnect = !drawnNumbers.isEmpty();
+
+        // Distinguish fresh JOIN vs RECONNECT
+        boolean wasReconnect = !drawnNumbers.isEmpty()
+                || !"WAITING".equals(currentGameState);
+
         if (wasReconnect) {
-            if (callback != null) callback.onReconnected();
+            List<RoomPlayer> roomPlayers = parsePlayers(p.optJSONArray("players"));
+            if (callback != null)
+                callback.onReconnected(currentGameState, roomPlayers, drawnNumbers);
         } else {
             if (callback != null) callback.onJoined(playerId, token, isHost);
         }
     }
 
     private void handleRoomUpdate(JSONObject p) {
-        List<RoomPlayer> players = new ArrayList<>();
-        JSONArray arr = p.optJSONArray("players");
-        if (arr != null) {
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject obj = arr.getJSONObject(i);
-                players.add(new RoomPlayer(
-                        obj.getString("playerId"),
-                        obj.getString("name"),
-                        obj.optBoolean("isHost", false),
-                        obj.optBoolean("isBot", false),
-                        obj.optBoolean("isConnected", true),
-                        obj.optInt("pageCount", 0),
-                        obj.optLong("balance", 0)));
-            }
-        }
-        // Sync room-level settings if server included them
-        if (p.has("pricePerPage"))      currentPricePerPage     = p.getLong("pricePerPage");
+        List<RoomPlayer> players = parsePlayers(p.optJSONArray("players"));
+
+        if (p.has("pricePerPage"))        currentPricePerPage     = p.getLong("pricePerPage");
         if (p.has("pendingPricePerPage")) pendingPricePerPage    = p.getLong("pendingPricePerPage");
-        if (p.has("autoResetDelayMs"))  currentAutoResetDelayMs = p.getInt("autoResetDelayMs");
-        if (p.has("autoStartDelayMs"))  currentAutoStartDelayMs = p.getInt("autoStartDelayMs");
+        if (p.has("autoResetDelayMs"))    currentAutoResetDelayMs = p.getInt("autoResetDelayMs");
+        if (p.has("autoStartDelayMs"))    currentAutoStartDelayMs = p.getInt("autoStartDelayMs");
+
+        currentGameState = p.optString("gameState", currentGameState);
 
         if (callback != null)
-            callback.onRoomUpdate(players, p.optString("gameState", "WAITING"));
+            callback.onRoomUpdate(players, currentGameState);
     }
 
     private void handlePagesAssigned(JSONObject p) {
@@ -456,16 +503,29 @@ public class LotoClient {
         }
     }
 
+    private void handleBanList(JSONObject p) {
+        List<String> names = new ArrayList<>();
+        List<String> ips   = new ArrayList<>();
+        JSONArray na = p.optJSONArray("bannedNames");
+        JSONArray ia = p.optJSONArray("bannedIps");
+        if (na != null) for (int i = 0; i < na.length(); i++) names.add(na.getString(i));
+        if (ia != null) for (int i = 0; i < ia.length(); i++) ips.add(ia.getString(i));
+        if (callback != null) callback.onBanList(names, ips);
+    }
+
     private void handleRoomReset(JSONObject p) {
-        // Server paid out jackpot — clear local game state
         long prizeEach   = p.optLong("prizeEach", 0);
         int  winnerCount = p.optInt("winnerCount", 0);
 
         pages.clear();
         drawnNumbers.clear();
         currentDrawIntervalMs = 0;
+        currentGameState      = "WAITING";
         pendingPricePerPage   = -1;
-        setState(ClientState.IN_GAME);   // still connected, waiting for next game
+        isPaused              = false;
+        voteCount             = 0;
+        voteNeeded            = 0;
+        setState(ClientState.IN_GAME);
 
         if (callback != null) callback.onRoomReset(prizeEach, winnerCount);
     }
@@ -507,6 +567,23 @@ public class LotoClient {
 
     // ── Helpers ───────────────────────────────────────────────────
 
+    private List<RoomPlayer> parsePlayers(JSONArray arr) {
+        List<RoomPlayer> players = new ArrayList<>();
+        if (arr == null) return players;
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject obj = arr.getJSONObject(i);
+            players.add(new RoomPlayer(
+                    obj.getString("playerId"),
+                    obj.getString("name"),
+                    obj.optBoolean("isHost", false),
+                    obj.optBoolean("isBot", false),
+                    obj.optBoolean("isConnected", true),
+                    obj.optInt("pageCount", 0),
+                    obj.optLong("balance", 0)));
+        }
+        return players;
+    }
+
     private ClientPage parseClientPage(JSONObject obj) {
         try {
             int       id      = obj.getInt("id");
@@ -543,29 +620,23 @@ public class LotoClient {
         private int                maxReconnectAttempts = 0;
         private boolean            autoClaimOnWin       = false;
         private LotoClientCallback callback;
+        private String             initialToken         = null;  // để RECONNECT ngay từ đầu
 
-        /** TCP host. Default: localhost */
-        public Builder host(String host)                    { this.host = host; return this; }
-
-        /** TCP port. Default: 9000 */
-        public Builder port(int port)                       { this.port = port; return this; }
-
+        public Builder host(String host)               { this.host = host; return this; }
+        public Builder port(int port)                  { this.port = port; return this; }
+        public Builder wsUrl(String wsUrl)             { this.wsUrl = wsUrl; return this; }
+        public Builder roomId(String roomId)           { this.roomId = roomId; return this; }
+        public Builder playerName(String name)         { this.playerName = name; return this; }
+        public Builder autoReconnect(boolean v)        { this.autoReconnect = v; return this; }
+        public Builder reconnectDelayMs(int ms)        { this.reconnectDelayMs = ms; return this; }
+        public Builder maxReconnectAttempts(int n)     { this.maxReconnectAttempts = n; return this; }
+        public Builder autoClaimOnWin(boolean v)       { this.autoClaimOnWin = v; return this; }
+        public Builder callback(LotoClientCallback cb) { this.callback = cb; return this; }
         /**
-         * Connect via WebSocket instead of TCP.
-         * Example: "ws://192.168.1.10:9001"
-         * Setting this overrides host/port for transport.
+         * Truyền token từ session trước để RECONNECT ngay khi connect().
+         * Dùng khi chạy CLI với --token <token>.
          */
-        public Builder wsUrl(String wsUrl)                  { this.wsUrl = wsUrl; return this; }
-
-        /** Room ID for multi-room servers. Null = single-room (default). */
-        public Builder roomId(String roomId)                { this.roomId = roomId; return this; }
-
-        public Builder playerName(String name)              { this.playerName = name; return this; }
-        public Builder autoReconnect(boolean v)             { this.autoReconnect = v; return this; }
-        public Builder reconnectDelayMs(int ms)             { this.reconnectDelayMs = ms; return this; }
-        public Builder maxReconnectAttempts(int n)          { this.maxReconnectAttempts = n; return this; }
-        public Builder autoClaimOnWin(boolean v)            { this.autoClaimOnWin = v; return this; }
-        public Builder callback(LotoClientCallback cb)      { this.callback = cb; return this; }
+        public Builder token(String token)             { this.initialToken = (token != null && !token.isBlank()) ? token : null; return this; }
 
         public LotoClient build() {
             if (playerName == null || playerName.trim().isEmpty())

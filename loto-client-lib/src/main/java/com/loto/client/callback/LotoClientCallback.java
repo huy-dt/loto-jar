@@ -21,12 +21,21 @@ public interface LotoClientCallback {
 
     void onConnected();
 
-    /** Joined room. {@code isHost=true} if you are the first player. */
+    /** Joined room fresh. {@code isHost=true} if you are the first player. */
     void onJoined(String playerId, String token, boolean isHost);
 
     void onDisconnected(boolean willRetry);
 
-    void onReconnected();
+    /**
+     * Reconnected to an active session.
+     * State is fully restored before this fires — pages are marked and drawnNumbers
+     * is populated, so the UI can re-render immediately.
+     *
+     * @param gameState    current server game state ("WAITING", "PLAYING", "ENDED", etc.)
+     * @param players      current room snapshot (empty if server didn't include it)
+     * @param drawnNumbers all numbers drawn so far (empty if game not started)
+     */
+    void onReconnected(String gameState, List<RoomPlayer> players, List<Integer> drawnNumbers);
 
     // ── Room ──────────────────────────────────────────────────────
 
@@ -43,6 +52,21 @@ public interface LotoClientCallback {
 
     void onInsufficientBalance(long required, long actual);
 
+    // ── Admin ─────────────────────────────────────────────────────
+
+    /**
+     * Admin authentication succeeded.
+     * After this fires, admin-only commands will be accepted by the server.
+     */
+    void onAdminAuthOk();
+
+    /**
+     * Response to {@code getBanList()} — danh sách tên và IP đang bị cấm.
+     * @param bannedNames tên player bị ban
+     * @param bannedIps   địa chỉ IP bị ban
+     */
+    void onBanList(List<String> bannedNames, List<String> bannedIps);
+
     // ── Game flow ─────────────────────────────────────────────────
 
     void onVoteUpdate(int current, int needed);
@@ -57,7 +81,7 @@ public interface LotoClientCallback {
     void onDrawIntervalChanged(int intervalMs);
 
     /**
-     * Host changed price per page (only while jackpot == 0).
+     * Host changed price per page.
      * @param newPrice new price in đồng
      */
     void onPricePerPageChanged(long newPrice);
@@ -74,10 +98,10 @@ public interface LotoClientCallback {
      */
     void onAutoStartScheduled(int delayMs);
 
-    /** Game was paused by host. */
+    /** Game was paused by host/admin. */
     void onGamePaused();
 
-    /** Game was resumed by host. */
+    /** Game was resumed by host/admin. */
     void onGameResumed();
 
     /**
@@ -100,7 +124,7 @@ public interface LotoClientCallback {
     void onClaimReceived(String playerId, String playerName, int pageId);
 
     /**
-     * Win confirmed. Note: prize is NOT paid yet — it's held until host resets.
+     * Win confirmed. Prize is held until host resets.
      * Multiple winners can be confirmed before payout.
      */
     void onWinConfirmed(String playerId, String playerName, int pageId);
@@ -123,13 +147,13 @@ public interface LotoClientCallback {
     void onGameEndedByServer(String reason);
 
     /**
-     * You were kicked from the room.
+     * You were kicked from the room. Connection is closed after this.
      * @param reason kick reason from host
      */
     void onKicked(String reason);
 
     /**
-     * You were banned from the room.
+     * You were banned from the room. Connection is closed after this.
      * @param reason ban reason
      */
     void onBanned(String reason);

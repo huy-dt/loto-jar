@@ -33,7 +33,6 @@ import java.util.concurrent.Executors;
  *
  * <h3>Non-Android (PC / headless test)</h3>
  * <pre>
- * // Fire callbacks directly on network thread (no dispatch needed)
  * AndroidLotoClient client = new AndroidLotoClient(
  *     builder,
  *     Runnable::run,   // inline dispatcher
@@ -103,6 +102,10 @@ public class AndroidLotoClient {
     public void voteStart()                                      { client.voteStart(); }
     public void claimWin(int pageId)                             { client.claimWin(pageId); }
     public void requestWalletHistory()                           { client.requestWalletHistory(); }
+
+    /** Authenticate as admin. Server responds with onAdminAuthOk() on success. */
+    public void adminAuth(String adminToken)                     { client.adminAuth(adminToken); }
+
     public void confirmWin(String playerId, int pageId)          { client.confirmWin(playerId, pageId); }
     public void rejectWin(String playerId, int pageId)           { client.rejectWin(playerId, pageId); }
     public void topUp(String playerId, long amount, String note) { client.topUp(playerId, amount, note); }
@@ -110,14 +113,30 @@ public class AndroidLotoClient {
     public void kick(String playerId, String reason)             { client.kick(playerId, reason); }
     public void ban(String playerId, String reason)              { client.ban(playerId, reason); }
     public void unban(String name)                               { client.unban(name); }
+    public void pauseGame()                                      { client.pauseGame(); }
+    public void resumeGame()                                     { client.resumeGame(); }
     public void setDrawInterval(int ms)                          { client.setDrawInterval(ms); }
     public void setPricePerPage(long price)                      { client.setPricePerPage(price); }
     public void setAutoReset(int delayMs)                        { client.setAutoReset(delayMs); }
     public void setAutoStart(int delayMs)                        { client.setAutoStart(delayMs); }
+    public void serverStart()                                    { client.serverStart(); }
+    public void serverEnd(String reason)                         { client.serverEnd(reason); }
+    public void resetRoom()                                      { client.resetRoom(); }
+    public void banIp(String ip)                                 { client.banIp(ip); }
+    public void unbanIp(String ip)                               { client.unbanIp(ip); }
+    public void getBanList()                                     { client.getBanList(); }
+
+    // ── State accessors ───────────────────────────────────────────
 
     public com.loto.client.core.ClientState getState()           { return client.getState(); }
     public String           getPlayerId()                        { return client.getPlayerId(); }
+    public String           getPlayerName()                      { return client.getPlayerName(); }
     public boolean          isHost()                             { return client.isHost(); }
+    public boolean          isAdmin()                            { return client.isAdmin(); }
+    public boolean          isPaused()                           { return client.isPaused(); }
+    public String           getCurrentGameState()                { return client.getCurrentGameState(); }
+    public int              getVoteCount()                       { return client.getVoteCount(); }
+    public int              getVoteNeeded()                      { return client.getVoteNeeded(); }
     public int              getCurrentDrawIntervalMs()           { return client.getCurrentDrawIntervalMs(); }
     public long             getCurrentPricePerPage()             { return client.getCurrentPricePerPage(); }
     public long             getPendingPricePerPage()             { return client.getPendingPricePerPage(); }
@@ -148,7 +167,10 @@ public class AndroidLotoClient {
         @Override public void onConnected()                                    { ui(() -> delegate.onConnected()); }
         @Override public void onJoined(String id, String token, boolean host)  { ui(() -> delegate.onJoined(id, token, host)); }
         @Override public void onDisconnected(boolean retry)                    { ui(() -> delegate.onDisconnected(retry)); }
-        @Override public void onReconnected()                                  { ui(() -> delegate.onReconnected()); }
+        @Override public void onReconnected(String gs, List<RoomPlayer> p,
+                                            List<Integer> drawn)               { ui(() -> delegate.onReconnected(gs, p, drawn)); }
+        @Override public void onAdminAuthOk()                                  { ui(() -> delegate.onAdminAuthOk()); }
+        @Override public void onBanList(List<String> n, List<String> ip)        { ui(() -> delegate.onBanList(n, ip)); }
         @Override public void onRoomUpdate(List<RoomPlayer> p, String s)       { ui(() -> delegate.onRoomUpdate(p, s)); }
         @Override public void onPlayerJoined(String id, String n, boolean h)   { ui(() -> delegate.onPlayerJoined(id, n, h)); }
         @Override public void onPlayerLeft(String id)                          { ui(() -> delegate.onPlayerLeft(id)); }
@@ -158,8 +180,8 @@ public class AndroidLotoClient {
         @Override public void onGameStarting(int ms)                           { ui(() -> delegate.onGameStarting(ms)); }
         @Override public void onDrawIntervalChanged(int ms)                    { ui(() -> delegate.onDrawIntervalChanged(ms)); }
         @Override public void onPricePerPageChanged(long price)                { ui(() -> delegate.onPricePerPageChanged(price)); }
-        @Override public void onAutoResetScheduled(int delayMs)               { ui(() -> delegate.onAutoResetScheduled(delayMs)); }
-        @Override public void onAutoStartScheduled(int delayMs)               { ui(() -> delegate.onAutoStartScheduled(delayMs)); }
+        @Override public void onAutoResetScheduled(int delayMs)                { ui(() -> delegate.onAutoResetScheduled(delayMs)); }
+        @Override public void onAutoStartScheduled(int delayMs)                { ui(() -> delegate.onAutoStartScheduled(delayMs)); }
         @Override public void onGamePaused()                                   { ui(() -> delegate.onGamePaused()); }
         @Override public void onGameResumed()                                  { ui(() -> delegate.onGameResumed()); }
         @Override public void onNumberDrawn(int n, List<Integer> drawn,

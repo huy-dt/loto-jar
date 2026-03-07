@@ -22,6 +22,12 @@ public enum MsgType {
     ADMIN_AUTH,         // xác thực admin bằng token bí mật
     PAUSE_GAME,         // admin only — tạm dừng game (dừng rút số)
     RESUME_GAME,        // admin only — tiếp tục game sau khi pause
+    SERVER_START,       // admin only — bắt đầu game ngay (bypass vote)
+    SERVER_END,         // admin only — kết thúc game không có winner
+    RESET_ROOM,         // admin only — reset phòng về WAITING (giữ balance)
+    BAN_IP,             // admin only — cấm theo địa chỉ IP
+    UNBAN_IP,           // admin only — gỡ cấm IP
+    GET_BAN_LIST,       // admin only — lấy danh sách tên + IP bị cấm
 
     // ── Outbound (Server → Client) ─────────────────────────────────
     WELCOME,
@@ -49,5 +55,6 @@ public enum MsgType {
     ADMIN_AUTH_OK,          // xác thực admin thành công
     GAME_PAUSED,            // server thông báo game đang tạm dừng
     GAME_RESUMED,           // server thông báo game tiếp tục
+    BAN_LIST,               // trả về danh sách tên + IP bị cấm (chỉ admin)
     ERROR
 }

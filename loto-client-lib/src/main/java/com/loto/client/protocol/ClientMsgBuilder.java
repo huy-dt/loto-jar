@@ -24,6 +24,17 @@ public class ClientMsgBuilder {
         return msg("RECONNECT", new JSONObject().put("token", token));
     }
 
+    // ── Admin authentication ──────────────────────────────────────
+
+    /**
+     * Authenticate as admin using the server's secret token.
+     * Server responds with ADMIN_AUTH_OK on success.
+     * @param adminToken the secret token printed in the server banner at startup
+     */
+    public static String adminAuth(String adminToken) {
+        return msg("ADMIN_AUTH", new JSONObject().put("token", adminToken));
+    }
+
     // ── Player actions ────────────────────────────────────────────
 
     public static String buyPage(int count) {
@@ -42,7 +53,7 @@ public class ClientMsgBuilder {
         return msg("GET_WALLET", new JSONObject());
     }
 
-    // ── Host-only ─────────────────────────────────────────────────
+    // ── Host/Admin-only ───────────────────────────────────────────
 
     public static String confirmWin(String playerId, int pageId) {
         return msg("CONFIRM_WIN", new JSONObject()
@@ -84,8 +95,50 @@ public class ClientMsgBuilder {
         return msg("UNBAN", new JSONObject().put("name", name));
     }
 
+    /** Pause the draw loop mid-game. Admin only. */
+    public static String pauseGame() {
+        return msg("PAUSE_GAME", new JSONObject());
+    }
+
+    /** Resume a paused game. Admin only. */
+    public static String resumeGame() {
+        return msg("RESUME_GAME", new JSONObject());
+    }
+
+    /** Start game ngay — bypass vote. Admin only. */
+    public static String serverStart() {
+        return msg("SERVER_START", new JSONObject());
+    }
+
+    /** Kết thúc game không có winner. Admin only. */
+    public static String serverEnd(String reason) {
+        JSONObject p = new JSONObject();
+        if (reason != null) p.put("reason", reason);
+        return msg("SERVER_END", p);
+    }
+
+    /** Reset phòng về WAITING — giữ balance. Admin only. */
+    public static String resetRoom() {
+        return msg("RESET_ROOM", new JSONObject());
+    }
+
+    /** Cấm theo địa chỉ IP. Admin only. */
+    public static String banIp(String ip) {
+        return msg("BAN_IP", new JSONObject().put("ip", ip));
+    }
+
+    /** Gỡ cấm IP. Admin only. */
+    public static String unbanIp(String ip) {
+        return msg("UNBAN_IP", new JSONObject().put("ip", ip));
+    }
+
+    /** Lấy danh sách tên + IP bị cấm. Admin only. */
+    public static String getBanList() {
+        return msg("GET_BAN_LIST", new JSONObject());
+    }
+
     /**
-     * Change draw speed live (host only).
+     * Change draw speed live — admin only.
      * @param intervalMs milliseconds between numbers (min 200)
      */
     public static String setDrawInterval(int intervalMs) {
@@ -93,7 +146,7 @@ public class ClientMsgBuilder {
     }
 
     /**
-     * Change price per page (host only).
+     * Change price per page — admin only.
      * Only allowed before any page has been purchased (jackpot == 0).
      * @param price new price in đồng (>= 0)
      */
@@ -102,7 +155,7 @@ public class ClientMsgBuilder {
     }
 
     /**
-     * Set auto-reset delay after game ends (host only).
+     * Set auto-reset delay after game ends — admin only.
      * @param delayMs milliseconds (0 = disable auto-reset)
      */
     public static String setAutoReset(int delayMs) {
@@ -110,7 +163,7 @@ public class ClientMsgBuilder {
     }
 
     /**
-     * Set auto-start delay (host only).
+     * Set auto-start delay — admin only.
      * @param delayMs milliseconds (0 = disable auto-start)
      */
     public static String setAutoStart(int delayMs) {

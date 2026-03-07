@@ -58,6 +58,50 @@ public class OutboundMsg {
         return new OutboundMsg(MsgType.WELCOME, p);
     }
 
+    /**
+     * Full-state welcome — sent on JOIN and RECONNECT so the client can
+     * immediately render the correct room state without extra round-trips.
+     *
+     * @param pages          the player's own pages (empty list for fresh join)
+     * @param players        all current PlayerInfo snapshots
+     * @param gameState      current GameState name ("WAITING", "PLAYING", etc.)
+     * @param isPaused       whether the game is currently paused
+     * @param drawnNumbers   numbers drawn so far (empty for WAITING)
+     * @param voteCount      current vote count
+     * @param voteNeeded     votes needed to start
+     * @param drawIntervalMs current draw interval in ms
+     * @param pricePerPage   current price per page
+     */
+    public static OutboundMsg welcome(String playerId, String token, boolean isHost,
+                                      List<LotoPage> pages,
+                                      List<PlayerInfo> players,
+                                      String gameState,
+                                      boolean isPaused,
+                                      List<Integer> drawnNumbers,
+                                      int voteCount,
+                                      int voteNeeded,
+                                      int drawIntervalMs,
+                                      long pricePerPage) {
+        JSONObject p = new JSONObject();
+        p.put("playerId",      playerId);
+        p.put("token",         token);
+        p.put("isHost",        isHost);
+        p.put("pages",         pagesToJson(pages));
+
+        // Room snapshot
+        JSONArray playersArr = new JSONArray();
+        for (PlayerInfo info : players) playersArr.put(info.toJson());
+        p.put("players",       playersArr);
+        p.put("gameState",     gameState);
+        p.put("isPaused",      isPaused);
+        p.put("drawnNumbers",  new JSONArray(drawnNumbers));
+        p.put("voteCount",     voteCount);
+        p.put("voteNeeded",    voteNeeded);
+        p.put("drawIntervalMs", drawIntervalMs);
+        p.put("pricePerPage",  pricePerPage);
+        return new OutboundMsg(MsgType.WELCOME, p);
+    }
+
     public static OutboundMsg playerJoined(String playerId, String name, boolean isHost) {
         JSONObject p = new JSONObject();
         p.put("playerId", playerId);
@@ -216,7 +260,6 @@ public class OutboundMsg {
     public static OutboundMsg gamePaused() {
         return new OutboundMsg(MsgType.GAME_PAUSED, new JSONObject());
     }
-
     public static OutboundMsg gameResumed(int drawIntervalMs) {
         JSONObject p = new JSONObject();
         p.put("drawIntervalMs", drawIntervalMs);
@@ -234,6 +277,18 @@ public class OutboundMsg {
     }
 
     // ─── Helpers ──────────────────────────────────────────────────
+
+    public static OutboundMsg banList(java.util.Set<String> bannedNames,
+                                      java.util.Set<String> bannedIps) {
+        JSONObject p     = new JSONObject();
+        JSONArray  names = new JSONArray();
+        JSONArray  ips   = new JSONArray();
+        bannedNames.forEach(names::put);
+        bannedIps.forEach(ips::put);
+        p.put("bannedNames", names);
+        p.put("bannedIps",   ips);
+        return new OutboundMsg(MsgType.BAN_LIST, p);
+    }
 
     private static JSONArray pagesToJson(List<LotoPage> pages) {
         JSONArray arr = new JSONArray();

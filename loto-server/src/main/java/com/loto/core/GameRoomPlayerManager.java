@@ -53,7 +53,8 @@ public class GameRoomPlayerManager {
         s.playersByConnId.put(connId, player);
         s.handlerByConnId.put(connId, handler);
 
-        handler.send(OutboundMsg.welcome(player.getId(), player.getToken(), false, player.getPages()).toJson());
+        // Full-state welcome: player gets room snapshot on join (no extra round-trips)
+        bc.sendWelcome(connId, player, false);
         bc.broadcast(OutboundMsg.playerJoined(player.getId(), player.getName(), false).toJson(), connId);
         bc.broadcastRoomUpdate();
 
@@ -128,14 +129,10 @@ public class GameRoomPlayerManager {
         s.handlerByConnId.put(connId, handler);
         s.ipByConnId.put(connId, handler.getRemoteIp());
 
-        handler.send(OutboundMsg.welcome(player.getId(), player.getToken(), false, player.getPages()).toJson());
+        // Full-state welcome: includes pages, drawn numbers, game state, room snapshot
+        bc.sendReconnectWelcome(connId, player);
+        // Send full wallet history so balance/transactions are up to date
         bc.sendBalanceSnapshot(connId, player);
-
-        if (!s.drawnNumbers.isEmpty()) {
-            for (int num : s.drawnNumbers) {
-                handler.send(OutboundMsg.numberDrawn(num, new ArrayList<>(s.drawnNumbers)).toJson());
-            }
-        }
 
         bc.broadcast(OutboundMsg.playerJoined(player.getId(), player.getName(), false).toJson(), null);
         bc.broadcastRoomUpdate();
