@@ -1,1 +1,1 @@
-java -jar loto-server-3.0.0.jar --ws 8001 --initial-balance 9999999 --interval 1000 --price 1000 --auto-reset 5000 --auto-verify --persist loto-save.json
+java -jar loto-server-3.0.1.jar --ws 8001 --initial-balance 9999999 --interval 1000 --price 1000 --auto-reset 5000 --auto-verify --persist loto-save.json

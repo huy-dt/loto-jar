@@ -136,10 +136,23 @@ public class OutboundMsg {
         return new OutboundMsg(MsgType.GAME_STARTING, p);
     }
 
+    /**
+     * Emits only the newly drawn number.
+     * Clients append it to their local drawnNumbers list.
+     * (drawnNumbers[] is delivered in full via WELCOME on connect/reconnect.)
+     */
+    public static OutboundMsg numberDrawn(int number) {
+        JSONObject p = new JSONObject();
+        p.put("number", number);
+        return new OutboundMsg(MsgType.NUMBER_DRAWN, p);
+    }
+
+    /** @deprecated Use {@link #numberDrawn(int)} — clients maintain their own list. */
+    @Deprecated
     public static OutboundMsg numberDrawn(int number, List<Integer> drawnSoFar) {
         JSONObject p = new JSONObject();
-        p.put("number",     number);
-        p.put("drawnList",  new JSONArray(drawnSoFar));
+        p.put("number",    number);
+        p.put("drawnList", new JSONArray(drawnSoFar));
         return new OutboundMsg(MsgType.NUMBER_DRAWN, p);
     }
 

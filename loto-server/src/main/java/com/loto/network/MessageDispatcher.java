@@ -45,11 +45,11 @@ public class MessageDispatcher {
         switch (msg.getType()) {
 
             case JOIN: {
-                String name = msg.getString("name");
-                if (name == null || name.trim().isEmpty()) {
-                    handler.send(OutboundMsg.error("MISSING_NAME", "name is required").toJson());
-                    return;
-                }
+                // JOIN handles both fresh-join and reconnect.
+                // Client sends token if it has one → server tries reconnect first.
+                // Falls back to new-join if token is absent or unrecognised.
+                String token = msg.getString("token");
+
                 GameRoom target;
                 if (roomManager != null) {
                     String roomId = msg.getString("roomId");
@@ -67,17 +67,33 @@ public class MessageDispatcher {
                 } else {
                     target = room;
                 }
+
+                // ── Reconnect path ──────────────────────────────
+                if (token != null && !token.isEmpty()) {
+                    if (target.reconnect(connId, token, handler) != null) break; // success
+                    // Token not found / expired → fall through to fresh join
+                }
+
+                // ── Fresh join path ─────────────────────────────
+                String name = msg.getString("name");
+                if (name == null || name.trim().isEmpty()) {
+                    handler.send(OutboundMsg.error("MISSING_NAME",
+                            "name is required for a new join").toJson());
+                    return;
+                }
                 target.join(connId, name.trim(), handler);
                 break;
             }
 
             case RECONNECT: {
+                // Legacy: kept for older clients. New clients use JOIN with token.
                 String token = msg.getString("token");
                 if (token == null) {
                     handler.send(OutboundMsg.error("MISSING_TOKEN", "token is required").toJson());
                     return;
                 }
-                if (_r.reconnect(connId, token, handler) == null) {
+                GameRoom target = (_r != null) ? _r : room;
+                if (target == null || target.reconnect(connId, token, handler) == null) {
                     handler.send(OutboundMsg.error("INVALID_TOKEN", "Token not found or expired").toJson());
                 }
                 break;

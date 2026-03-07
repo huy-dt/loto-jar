@@ -35,6 +35,24 @@
     },
     {
       "isHost": false,
+      "pages": [],
+      "balance": 9999999,
+      "name": "admin",
+      "id": "841e1ff7",
+      "transactions": [],
+      "token": "fc156424-246d-4974-a411-eb68bc173363"
+    },
+    {
+      "isHost": false,
+      "pages": [],
+      "balance": 9999999,
+      "name": "admin",
+      "id": "7c162be5",
+      "transactions": [],
+      "token": "9581dc62-dfc9-4f06-951d-d0350a57faac"
+    },
+    {
+      "isHost": false,
       "pages": [
         {
           "grid": [
@@ -431,10 +449,10 @@
   ],
   "winnerIds": [],
   "drawIntervalMs": 1000,
-  "savedAt": 1772853019564,
+  "savedAt": 1772892048098,
   "gameState": "WAITING",
   "drawnNumbers": [],
   "autoResetDelayMs": 5000,
-  "roomId": "f3208a15-5566-46fe-81bb-bf9fafc84530",
+  "roomId": "d6de55bd-56d4-4fa7-89af-f03686342532",
   "bannedIds": []
 }

@@ -50,7 +50,7 @@ public class GameRoomGameFlow {
     }
 
     private void scheduleAutoStart(int delayMs) {
-        cancelAutoStart();
+        cancelAutoStartSilent();    // cancel old task without broadcasting
         bc.broadcast(OutboundMsg.autoStartScheduled(delayMs).toJson(), null);
         if (s.callback != null) s.callback.onAutoStartScheduled(delayMs);
         System.out.printf("[GameRoom] Auto-start em %d ms...%n", delayMs);
@@ -68,15 +68,20 @@ public class GameRoomGameFlow {
         }, delayMs, TimeUnit.MILLISECONDS);
     }
 
-    /** Cancels the auto-start countdown (e.g. player left, room drops below minPlayers). */
+    /** Cancels the auto-start countdown and broadcasts the cancellation to clients. */
     public synchronized void cancelAutoStart() {
+        cancelAutoStartSilent();
+        bc.broadcast(OutboundMsg.autoStartScheduled(0).toJson(), null);
+        if (s.callback != null) s.callback.onAutoStartScheduled(0);
+        System.out.println("[GameRoom] Auto-start cancelled.");
+    }
+
+    /** Cancels the scheduled task only — no broadcast. Used internally before scheduling a new one. */
+    private void cancelAutoStartSilent() {
         if (s.autoStartTask != null && !s.autoStartTask.isDone()) {
             s.autoStartTask.cancel(false);
         }
         s.autoStartTask = null;
-        bc.broadcast(OutboundMsg.autoStartScheduled(0).toJson(), null);
-        if (s.callback != null) s.callback.onAutoStartScheduled(0);
-        System.out.println("[GameRoom] Auto-start cancelled.");
     }
 
     /**
@@ -129,8 +134,9 @@ public class GameRoomGameFlow {
         s.state = GameState.PLAYING;
         cancelAutoStart();   // no longer needed
 
+        // GAME_STARTING carries drawIntervalMs; clients infer state = PLAYING from it.
+        // No extra ROOM_UPDATE needed — state change is implicit in the event.
         bc.broadcast(OutboundMsg.gameStarting(s.currentDrawIntervalMs).toJson(), null);
-        bc.broadcastRoomUpdate();
         if (s.callback != null) s.callback.onGameStarting();
 
         BotManager bm = s.botManagerRef;
@@ -160,7 +166,9 @@ public class GameRoomGameFlow {
         int number = s.numberPool.remove(s.numberPool.size() - 1);
         s.drawnNumbers.add(number);
 
-        bc.broadcast(OutboundMsg.numberDrawn(number, new ArrayList<>(s.drawnNumbers)).toJson(), null);
+        // Only emit the new number — clients append it to their local list.
+        // drawnNumbers[] is already delivered in full via WELCOME on (re)connect.
+        bc.broadcast(OutboundMsg.numberDrawn(number).toJson(), null);
         if (s.callback != null) s.callback.onNumberDrawn(number, new ArrayList<>(s.drawnNumbers));
 
         BotManager bm = s.botManagerRef;
@@ -232,8 +240,8 @@ public class GameRoomGameFlow {
         if (s.state != GameState.PLAYING) return;
         stopDrawing();
         s.state = GameState.PAUSED;
+        // GAME_PAUSED is self-describing; no ROOM_UPDATE needed.
         bc.broadcast(OutboundMsg.gamePaused().toJson(), null);
-        bc.broadcastRoomUpdate();
         persist.saveState();
         if (s.callback != null) s.callback.onGamePaused();
         System.out.println("[GameRoom] Game PAUSED — " + s.drawnNumbers.size() + " numbers drawn so far.");
@@ -245,8 +253,8 @@ public class GameRoomGameFlow {
         s.drawTask = s.scheduler.scheduleAtFixedRate(
                 this::drawNextNumber,
                 s.currentDrawIntervalMs, s.currentDrawIntervalMs, TimeUnit.MILLISECONDS);
+        // GAME_RESUMED carries drawIntervalMs; no ROOM_UPDATE needed.
         bc.broadcast(OutboundMsg.gameResumed(s.currentDrawIntervalMs).toJson(), null);
-        bc.broadcastRoomUpdate();
         persist.saveState();
         if (s.callback != null) s.callback.onGameResumed();
         System.out.println("[GameRoom] Game RESUMED.");
@@ -400,8 +408,7 @@ public class GameRoomGameFlow {
         if (s.callback != null) s.callback.onAutoResetDelayChanged(old, delayMs);
 
         if (delayMs == 0) {
-            cancelAutoReset();
-            bc.broadcast(OutboundMsg.autoResetScheduled(0).toJson(), null);
+            cancelAutoReset();          // already broadcasts AUTO_RESET_SCHEDULED(0)
         } else if (s.state == GameState.ENDED) {
             scheduleAutoReset(delayMs);
         } else {
@@ -410,7 +417,7 @@ public class GameRoomGameFlow {
     }
 
     public synchronized void scheduleAutoReset(int delayMs) {
-        cancelAutoReset();
+        cancelAutoResetSilent();    // cancel old task without broadcasting
         bc.broadcast(OutboundMsg.autoResetScheduled(delayMs).toJson(), null);
         if (s.callback != null) s.callback.onAutoResetScheduled(delayMs);
         if (delayMs <= 0) { reset(); return; }
@@ -420,12 +427,17 @@ public class GameRoomGameFlow {
     }
 
     public synchronized void cancelAutoReset() {
+        cancelAutoResetSilent();
+        bc.broadcast(OutboundMsg.autoResetScheduled(0).toJson(), null);
+        if (s.callback != null) s.callback.onAutoResetScheduled(0);
+    }
+
+    /** Cancels the scheduled task only — no broadcast. Used internally before scheduling a new one. */
+    private void cancelAutoResetSilent() {
         if (s.autoResetTask != null && !s.autoResetTask.isDone()) {
             s.autoResetTask.cancel(false);
         }
         s.autoResetTask = null;
-        bc.broadcast(OutboundMsg.autoResetScheduled(0).toJson(), null);
-        if (s.callback != null) s.callback.onAutoResetScheduled(0);
     }
 
     // ─── Internal helpers ─────────────────────────────────────────

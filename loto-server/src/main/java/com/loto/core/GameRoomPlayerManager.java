@@ -53,10 +53,10 @@ public class GameRoomPlayerManager {
         s.playersByConnId.put(connId, player);
         s.handlerByConnId.put(connId, handler);
 
-        // Full-state welcome: player gets room snapshot on join (no extra round-trips)
+        // Full-state WELCOME → joining player gets complete snapshot.
+        // Others receive PLAYER_JOINED to update their player list.
         bc.sendWelcome(connId, player, false);
         bc.broadcast(OutboundMsg.playerJoined(player.getId(), player.getName(), false).toJson(), connId);
-        bc.broadcastRoomUpdate();
 
         if (s.callback != null) s.callback.onPlayerJoined(player);
         persist.saveState();
@@ -123,19 +123,31 @@ public class GameRoomPlayerManager {
         Player player = s.playersByToken.get(token);
         if (player == null) return null;
 
+        // ── Evict the old connection if still mapped ──────────────
+        // Find the old connId for this player and close it cleanly so
+        // we don't leave a ghost handler in the maps.
+        String oldConnId = s.getConnIdForPlayer(player);
+        if (oldConnId != null && !oldConnId.equals(connId)) {
+            IClientHandler oldHandler = s.handlerByConnId.get(oldConnId);
+            // Remove from all maps first so onConnectionLost (if fired) is a no-op
+            s.playersByConnId.remove(oldConnId);
+            s.handlerByConnId.remove(oldConnId);
+            s.ipByConnId.remove(oldConnId);
+            s.adminConnIds.remove(oldConnId);
+            if (oldHandler != null) oldHandler.close(); // close after evicting
+        }
+
         player.setConnected(true);
-        s.playersByConnId.values().remove(player);
         s.playersByConnId.put(connId, player);
         s.handlerByConnId.put(connId, handler);
         s.ipByConnId.put(connId, handler.getRemoteIp());
 
-        // Full-state welcome: includes pages, drawn numbers, game state, room snapshot
+        // Full-state WELCOME (includes pages + drawnNumbers for mid-game catch-up).
+        // WALLET_HISTORY sent separately so balance/transactions are up to date.
+        // Others receive PLAYER_JOINED to restore the player in their list.
         bc.sendReconnectWelcome(connId, player);
-        // Send full wallet history so balance/transactions are up to date
         bc.sendBalanceSnapshot(connId, player);
-
-        bc.broadcast(OutboundMsg.playerJoined(player.getId(), player.getName(), false).toJson(), null);
-        bc.broadcastRoomUpdate();
+        bc.broadcast(OutboundMsg.playerJoined(player.getId(), player.getName(), false).toJson(), connId);
 
         if (s.callback != null) s.callback.onPlayerReconnected(player);
         return player;

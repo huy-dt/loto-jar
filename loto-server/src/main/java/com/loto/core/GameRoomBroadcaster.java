@@ -67,21 +67,23 @@ public class GameRoomBroadcaster {
     }
 
     /**
-     * Sends a full-state WELCOME to a freshly joined player.
-     * Includes current room snapshot so the client doesn't need extra requests.
-     * Also sends individual state messages for SDK/client backward compatibility.
+     * Sends a single full-state WELCOME to a joining or reconnecting player.
+     * The WELCOME payload contains everything the client needs:
+     *   playerId, token, isHost, pages, players[], gameState, isPaused,
+     *   drawnNumbers[], voteCount, voteNeeded, drawIntervalMs, pricePerPage.
+     * No follow-up ROOM_UPDATE / VOTE_UPDATE / GAME_STARTING needed.
      */
     public void sendWelcome(String connId, Player player, boolean isHost) {
         List<PlayerInfo> snapshot = buildPlayerSnapshot();
-        boolean isPaused = s.state == com.loto.core.GameState.PAUSED;
-        String gameStateName = isPaused ? "PLAYING" : s.state.name();
+        boolean isPaused     = s.state == com.loto.core.GameState.PAUSED;
+        String  gameStateName = isPaused ? "PLAYING" : s.state.name();
 
-        int voteNeeded = (int) Math.ceil(
-            s.playersByToken.values().stream().filter(p -> !p.isBot()).count() * 0.5
+        int voteNeeded = Math.max(
+            (int) Math.ceil(s.playersByToken.values().stream().filter(p -> !p.isBot()).count() * 0.5),
+            1
         );
 
-        // 1. Full-state WELCOME (for clients that parse it fully)
-        String welcomeJson = OutboundMsg.welcome(
+        sendTo(connId, OutboundMsg.welcome(
             player.getId(), player.getToken(), isHost,
             player.getPages(),
             snapshot,
@@ -89,33 +91,15 @@ public class GameRoomBroadcaster {
             isPaused,
             new ArrayList<>(s.drawnNumbers),
             s.votedPlayerIds.size(),
-            Math.max(voteNeeded, 1),
+            voteNeeded,
             s.currentDrawIntervalMs,
             s.currentPricePerPage
-        ).toJson();
-        sendTo(connId, welcomeJson);
-
-        // 2. Follow-up messages for SDK compatibility
-        // ROOM_UPDATE — players list + game state
-        String roomJson = OutboundMsg.roomUpdate(snapshot, gameStateName,
-                s.currentPricePerPage, s.currentAutoResetDelayMs).toJson();
-        sendTo(connId, roomJson);
-
-        // VOTE_UPDATE — if waiting/voting
-        if (s.state == com.loto.core.GameState.WAITING || s.state == com.loto.core.GameState.VOTING) {
-            sendTo(connId, OutboundMsg.voteUpdate(s.votedPlayerIds.size(), Math.max(voteNeeded, 1)).toJson());
-        }
-
-        // GAME_STARTING — if mid-game, let client know interval
-        if (s.state == com.loto.core.GameState.PLAYING || isPaused) {
-            sendTo(connId, OutboundMsg.gameStarting(s.currentDrawIntervalMs).toJson());
-            if (isPaused) sendTo(connId, OutboundMsg.gamePaused().toJson());
-        }
+        ).toJson());
     }
 
     /**
-     * Sends a full-state WELCOME to a reconnecting player.
-     * Same as sendWelcome but always includes the player's pages (even mid-game).
+     * Reconnect welcome — identical to join welcome; pages + drawnNumbers
+     * already included in the full-state WELCOME payload.
      */
     public void sendReconnectWelcome(String connId, Player player) {
         sendWelcome(connId, player, player.isHost());
