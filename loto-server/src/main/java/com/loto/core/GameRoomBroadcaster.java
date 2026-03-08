@@ -93,13 +93,16 @@ public class GameRoomBroadcaster {
             s.votedPlayerIds.size(),
             voteNeeded,
             s.currentDrawIntervalMs,
-            s.currentPricePerPage
+            s.currentPricePerPage,
+            player.getBalance(),
+            player.getTransactions()
         ).toJson());
     }
 
     /**
-     * Reconnect welcome — identical to join welcome; pages + drawnNumbers
-     * already included in the full-state WELCOME payload.
+     * Reconnect welcome — identical to join welcome.
+     * WELCOME payload already includes pages, drawnNumbers, balance, transactions.
+     * No separate sendBalanceSnapshot needed.
      */
     public void sendReconnectWelcome(String connId, Player player) {
         sendWelcome(connId, player, player.isHost());

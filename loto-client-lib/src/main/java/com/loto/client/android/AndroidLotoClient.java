@@ -165,10 +165,13 @@ public class AndroidLotoClient {
         private void ui(Runnable r) { ui.post(r); }
 
         @Override public void onConnected()                                    { ui(() -> delegate.onConnected()); }
-        @Override public void onJoined(String id, String token, boolean host)  { ui(() -> delegate.onJoined(id, token, host)); }
+        @Override public void onJoined(String id, String token, boolean host,
+                                       List<RoomPlayer> players, long pricePerPage, long balance) {
+            ui(() -> delegate.onJoined(id, token, host, players, pricePerPage, balance));
+        }
         @Override public void onDisconnected(boolean retry)                    { ui(() -> delegate.onDisconnected(retry)); }
         @Override public void onReconnected(String gs, List<RoomPlayer> p,
-                                            List<Integer> drawn)               { ui(() -> delegate.onReconnected(gs, p, drawn)); }
+                                            List<Integer> drawn, long balance) { ui(() -> delegate.onReconnected(gs, p, drawn, balance)); }
         @Override public void onAdminAuthOk()                                  { ui(() -> delegate.onAdminAuthOk()); }
         @Override public void onBanList(List<String> n, List<String> ip)        { ui(() -> delegate.onBanList(n, ip)); }
         @Override public void onRoomUpdate(List<RoomPlayer> p, String s)       { ui(() -> delegate.onRoomUpdate(p, s)); }

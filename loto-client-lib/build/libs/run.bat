@@ -6,6 +6,6 @@ echo Router IP: %ROUTER_IP%
 
 set /p NAME=Nhap name: 
 
-java -jar loto-client-3.0.0.jar --ws %ROUTER_IP%:8001 --name %NAME%
+java -jar loto-client-3.0.2.jar --ws %ROUTER_IP%:8001 --name %NAME%
 
 pause

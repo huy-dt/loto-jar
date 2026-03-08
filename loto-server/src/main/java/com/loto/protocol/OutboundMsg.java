@@ -72,6 +72,11 @@ public class OutboundMsg {
      * @param drawIntervalMs current draw interval in ms
      * @param pricePerPage   current price per page
      */
+    /**
+     * Full-state WELCOME — sent on both JOIN and RECONNECT.
+     * Contains everything the client needs to render immediately:
+     * identity, pages, room snapshot, game state, wallet.
+     */
     public static OutboundMsg welcome(String playerId, String token, boolean isHost,
                                       List<LotoPage> pages,
                                       List<PlayerInfo> players,
@@ -81,7 +86,9 @@ public class OutboundMsg {
                                       int voteCount,
                                       int voteNeeded,
                                       int drawIntervalMs,
-                                      long pricePerPage) {
+                                      long pricePerPage,
+                                      long balance,
+                                      List<Transaction> transactions) {
         JSONObject p = new JSONObject();
         p.put("playerId",      playerId);
         p.put("token",         token);
@@ -99,6 +106,23 @@ public class OutboundMsg {
         p.put("voteNeeded",    voteNeeded);
         p.put("drawIntervalMs", drawIntervalMs);
         p.put("pricePerPage",  pricePerPage);
+
+        // Wallet — inline so client has balance on first frame, no extra round-trip
+        p.put("balance", balance);
+        JSONArray txArr = new JSONArray();
+        if (transactions != null) {
+            for (Transaction tx : transactions) {
+                JSONObject t = new JSONObject();
+                t.put("timestamp",    tx.getTimestamp());
+                t.put("type",         tx.getType().name());
+                t.put("amount",       tx.getAmount());
+                t.put("balanceAfter", tx.getBalanceAfter());
+                t.put("note",         tx.getNote());
+                txArr.put(t);
+            }
+        }
+        p.put("transactions", txArr);
+
         return new OutboundMsg(MsgType.WELCOME, p);
     }
 

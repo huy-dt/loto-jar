@@ -431,18 +431,40 @@ public class LotoClient {
             }
         }
 
+        // Wallet — balance + transactions are now inline in WELCOME (no extra round-trip)
+        if (p.has("balance")) {
+            long bal = p.getLong("balance");
+            List<WalletInfo.TxRecord> history = new ArrayList<>();
+            JSONArray txArr = p.optJSONArray("transactions");
+            if (txArr != null) {
+                for (int i = 0; i < txArr.length(); i++) {
+                    JSONObject t = txArr.getJSONObject(i);
+                    history.add(new WalletInfo.TxRecord(
+                            t.optLong("timestamp", 0),
+                            t.optString("type", ""),
+                            t.optLong("amount", 0),
+                            t.optLong("balanceAfter", 0),
+                            t.optString("note", "")));
+                }
+            }
+            wallet.setHistory(bal, history);
+        }
+
         setState(ClientState.IN_GAME);
 
-        // Distinguish fresh JOIN vs RECONNECT
+        List<RoomPlayer> roomPlayers = parsePlayers(p.optJSONArray("players"));
+        long balance = wallet.getBalance();
+
+        // Distinguish fresh JOIN vs RECONNECT by gameState + drawnNumbers
         boolean wasReconnect = !drawnNumbers.isEmpty()
                 || !"WAITING".equals(currentGameState);
 
         if (wasReconnect) {
-            List<RoomPlayer> roomPlayers = parsePlayers(p.optJSONArray("players"));
             if (callback != null)
-                callback.onReconnected(currentGameState, roomPlayers, drawnNumbers);
+                callback.onReconnected(currentGameState, roomPlayers, drawnNumbers, balance);
         } else {
-            if (callback != null) callback.onJoined(playerId, token, isHost);
+            if (callback != null)
+                callback.onJoined(playerId, token, isHost, roomPlayers, currentPricePerPage, balance);
         }
     }
 

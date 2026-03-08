@@ -455,11 +455,12 @@ public class Main {
             System.out.println("[~] Đang kết nối...");
         }
 
-        @Override public void onJoined(String id, String token, boolean isHost) {
+        @Override public void onJoined(String id, String token, boolean isHost,
+                                      List<RoomPlayer> players, long pricePerPage, long balance) {
             System.out.printf("[+] Đã vào phòng  id=%-8s%s%n", id, isHost ? "  (HOST)" : "");
+            System.out.printf("    Số dư: %,dđ  |  Giá tờ: %,dđ  |  Phòng: %d người%n",
+                              balance, pricePerPage, players.size());
             System.out.println("┌─ Lệnh reconnect (copy để dùng lại) ──────────────────────");
-            // Build lại lệnh reconnect từ args hiện tại
-            String server = client.getPlayerName(); // placeholder — in full cmd below
             System.out.printf("│  --token %s%n", token);
             System.out.println("└──────────────────────────────────────────────────────────");
             // Auto-auth if token was provided at startup
@@ -474,7 +475,7 @@ public class Main {
         }
 
         @Override public void onReconnected(String gameState, List<RoomPlayer> players,
-                                            List<Integer> drawnNumbers) {
+                                            List<Integer> drawnNumbers, long balance) {
             System.out.println("╔══════════════════════════════════════════╗");
             System.out.printf ("║  ↩  RECONNECTED  —  state: %-14s║%n", gameState);
             System.out.printf ("║  Số đã quay: %-4d  Tờ: %-17d║%n",

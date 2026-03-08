@@ -21,8 +21,17 @@ public interface LotoClientCallback {
 
     void onConnected();
 
-    /** Joined room fresh. {@code isHost=true} if you are the first player. */
-    void onJoined(String playerId, String token, boolean isHost);
+    /**
+     * Joined room fresh. All fields come from the WELCOME payload.
+     * {@code isHost=true} if you are the first player.
+     *
+     * @param players      current room snapshot
+     * @param pricePerPage current price per page
+     * @param balance      your starting balance
+     */
+    void onJoined(String playerId, String token, boolean isHost,
+                  java.util.List<com.loto.client.model.RoomPlayer> players,
+                  long pricePerPage, long balance);
 
     void onDisconnected(boolean willRetry);
 
@@ -35,7 +44,12 @@ public interface LotoClientCallback {
      * @param players      current room snapshot (empty if server didn't include it)
      * @param drawnNumbers all numbers drawn so far (empty if game not started)
      */
-    void onReconnected(String gameState, List<RoomPlayer> players, List<Integer> drawnNumbers);
+    /**
+     * Reconnected to an active session. Full state is restored.
+     * @param balance      current wallet balance
+     */
+    void onReconnected(String gameState, List<RoomPlayer> players,
+                       List<Integer> drawnNumbers, long balance);
 
     // ── Room ──────────────────────────────────────────────────────
 
