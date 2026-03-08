@@ -95,7 +95,8 @@ public class GameRoomBroadcaster {
             s.currentDrawIntervalMs,
             s.currentPricePerPage,
             player.getBalance(),
-            player.getTransactions()
+            player.getTransactions(),
+            s.jackpot                           // ← roomInfo.jackpot
         ).toJson());
     }
 

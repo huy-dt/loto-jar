@@ -69,6 +69,7 @@ public class LotoClient {
     private volatile long              pendingPricePerPage   = -1;
     private volatile int               currentAutoResetDelayMs;
     private volatile int               currentAutoStartDelayMs;
+    private volatile long              jackpot;
 
     private final List<ClientPage>     pages        = new CopyOnWriteArrayList<>();
     private final List<Integer>        drawnNumbers = new CopyOnWriteArrayList<>();
@@ -237,6 +238,7 @@ public class LotoClient {
 
     public ClientState       getState()                   { return state; }
     public String            getPlayerId()                { return playerId; }
+    public String            getToken()                   { return token; }
     public String            getPlayerName()              { return playerName; }
     public boolean           isHost()                     { return isHost; }
     public boolean           isAdmin()                    { return isAdmin; }
@@ -250,6 +252,8 @@ public class LotoClient {
     public long              getPendingPricePerPage()     { return pendingPricePerPage; }
     public int               getCurrentAutoResetDelayMs() { return currentAutoResetDelayMs; }
     public int               getCurrentAutoStartDelayMs() { return currentAutoStartDelayMs; }
+    /** Jackpot hiện tại của phòng — cập nhật từ roomInfo trong WELCOME. */
+    public long              getJackpot()                 { return jackpot; }
     public List<ClientPage>  getPages()                   { return Collections.unmodifiableList(pages); }
     public List<Integer>     getDrawnNumbers()            { return Collections.unmodifiableList(drawnNumbers); }
     public WalletInfo        getWallet()                  { return wallet; }
@@ -403,22 +407,43 @@ public class LotoClient {
         token    = p.getString("token");
         isHost   = p.optBoolean("isHost", false);
 
-        // ── Restore drawnNumbers FIRST — pages need them for markAll() ──
-        JSONArray drawnArr = p.optJSONArray("drawnNumbers");
-        if (drawnArr != null) {
-            drawnNumbers.clear();
-            for (int i = 0; i < drawnArr.length(); i++) drawnNumbers.add(drawnArr.getInt(i));
+        // ── roomInfo — full room snapshot ─────────────────────────
+        // Supports new structured format (roomInfo object) AND legacy flat fields.
+        JSONObject roomInfo = p.optJSONObject("roomInfo");
+        if (roomInfo != null) {
+            // New server format
+            currentGameState      = roomInfo.optString("status", "WAITING");
+            isPaused              = roomInfo.optBoolean("isPaused", false);
+            currentPricePerPage   = roomInfo.optLong("bet", roomInfo.optLong("pricePerPage", 0));
+            currentDrawIntervalMs = roomInfo.optInt("drawIntervalMs", 0);
+            voteCount             = roomInfo.optInt("voteCount", 0);
+            voteNeeded            = roomInfo.optInt("voteNeeded", 0);
+            jackpot               = roomInfo.optLong("jackpot", 0);
+
+            // Restore drawnNumbers FIRST — pages need them for markAll()
+            JSONArray drawnArr = roomInfo.optJSONArray("drawnNumbers");
+            if (drawnArr != null) {
+                drawnNumbers.clear();
+                for (int i = 0; i < drawnArr.length(); i++) drawnNumbers.add(drawnArr.getInt(i));
+            }
+        } else {
+            // Legacy flat format (backward compat)
+            currentGameState      = p.optString("gameState", "WAITING");
+            isPaused              = p.optBoolean("isPaused", false);
+            currentPricePerPage   = p.optLong("pricePerPage", currentPricePerPage);
+            currentDrawIntervalMs = p.optInt("drawIntervalMs", currentDrawIntervalMs);
+            voteCount             = p.optInt("voteCount", 0);
+            voteNeeded            = p.optInt("voteNeeded", 0);
+
+            JSONArray drawnArr = p.optJSONArray("drawnNumbers");
+            if (drawnArr != null) {
+                drawnNumbers.clear();
+                for (int i = 0; i < drawnArr.length(); i++) drawnNumbers.add(drawnArr.getInt(i));
+            }
         }
 
-        // Restore room settings included in full-state WELCOME
-        if (p.has("drawIntervalMs"))  currentDrawIntervalMs   = p.getInt("drawIntervalMs");
-        if (p.has("pricePerPage"))    currentPricePerPage     = p.getLong("pricePerPage");
-        if (p.has("isPaused"))        isPaused                = p.getBoolean("isPaused");
-        voteCount        = p.optInt("voteCount", 0);
-        voteNeeded       = p.optInt("voteNeeded", 0);
-        currentGameState = p.optString("gameState", "WAITING");
-
-        // Restore own pages — drawnNumbers already populated above
+        // ── Player's own pages ─────────────────────────────────────
+        // drawnNumbers already populated above — markAll() works correctly
         pages.clear();
         JSONArray pagesArr = p.optJSONArray("pages");
         if (pagesArr != null) {
@@ -431,33 +456,33 @@ public class LotoClient {
             }
         }
 
-        // Wallet — balance + transactions are now inline in WELCOME (no extra round-trip)
-        if (p.has("balance")) {
+        // ── playerInfo — private wallet snapshot ───────────────────
+        // Supports new structured format (playerInfo object) AND legacy flat fields.
+        JSONObject playerInfo = p.optJSONObject("playerInfo");
+        if (playerInfo != null) {
+            // New server format
+            long bal = playerInfo.optLong("balance", 0);
+            List<WalletInfo.TxRecord> history = parseTxArray(playerInfo.optJSONArray("transactions"));
+            wallet.setHistory(bal, history);
+        } else if (p.has("balance")) {
+            // Legacy flat format
             long bal = p.getLong("balance");
-            List<WalletInfo.TxRecord> history = new ArrayList<>();
-            JSONArray txArr = p.optJSONArray("transactions");
-            if (txArr != null) {
-                for (int i = 0; i < txArr.length(); i++) {
-                    JSONObject t = txArr.getJSONObject(i);
-                    history.add(new WalletInfo.TxRecord(
-                            t.optLong("timestamp", 0),
-                            t.optString("type", ""),
-                            t.optLong("amount", 0),
-                            t.optLong("balanceAfter", 0),
-                            t.optString("note", "")));
-                }
-            }
+            List<WalletInfo.TxRecord> history = parseTxArray(p.optJSONArray("transactions"));
             wallet.setHistory(bal, history);
         }
 
         setState(ClientState.IN_GAME);
 
-        List<RoomPlayer> roomPlayers = parsePlayers(p.optJSONArray("players"));
+        // Parse room players — from roomInfo.players (new) or top-level players (legacy)
+        JSONArray playersArr = (roomInfo != null)
+                ? roomInfo.optJSONArray("players")
+                : p.optJSONArray("players");
+        List<RoomPlayer> roomPlayers = parsePlayersWithPages(playersArr);
+
         long balance = wallet.getBalance();
 
-        // Distinguish fresh JOIN vs RECONNECT by gameState + drawnNumbers
-        boolean wasReconnect = !drawnNumbers.isEmpty()
-                || !"WAITING".equals(currentGameState);
+        // Distinguish fresh JOIN vs RECONNECT: reconnect has drawnNumbers or non-WAITING state
+        boolean wasReconnect = !drawnNumbers.isEmpty() || !"WAITING".equals(currentGameState);
 
         if (wasReconnect) {
             if (callback != null)
@@ -569,26 +594,16 @@ public class LotoClient {
     }
 
     private void handleWalletHistory(JSONObject p) {
-        long balance = p.optLong("balance", 0);
-        List<TxRecord> history = new ArrayList<>();
-        JSONArray arr = p.optJSONArray("transactions");
-        if (arr != null) {
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject t = arr.getJSONObject(i);
-                history.add(new TxRecord(
-                        t.optLong("timestamp", 0),
-                        t.optString("type", ""),
-                        t.optLong("amount", 0),
-                        t.optLong("balanceAfter", 0),
-                        t.optString("note", "")));
-            }
-        }
-        wallet.setHistory(balance, history);
+        long bal = p.optLong("balance", 0);
+        wallet.setHistory(bal, parseTxArray(p.optJSONArray("transactions")));
         if (callback != null) callback.onWalletHistory(wallet);
     }
 
     // ── Helpers ───────────────────────────────────────────────────
 
+    /**
+     * Parses players from ROOM_UPDATE — no page grids, only pageCount.
+     */
     private List<RoomPlayer> parsePlayers(JSONArray arr) {
         List<RoomPlayer> players = new ArrayList<>();
         if (arr == null) return players;
@@ -604,6 +619,59 @@ public class LotoClient {
                     obj.optLong("balance", 0)));
         }
         return players;
+    }
+
+    /**
+     * Parses players from WELCOME roomInfo.players[] — includes full page grids.
+     * Falls back gracefully if pages are absent (e.g. legacy server).
+     */
+    private List<RoomPlayer> parsePlayersWithPages(JSONArray arr) {
+        List<RoomPlayer> players = new ArrayList<>();
+        if (arr == null) return players;
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject obj = arr.getJSONObject(i);
+
+            // Parse page grids if present
+            List<ClientPage> playerPages = null;
+            JSONArray pagesArr = obj.optJSONArray("pages");
+            if (pagesArr != null && pagesArr.length() > 0) {
+                playerPages = new ArrayList<>();
+                for (int j = 0; j < pagesArr.length(); j++) {
+                    ClientPage page = parseClientPage(pagesArr.getJSONObject(j));
+                    if (page != null) {
+                        page.markAll(drawnNumbers);  // mark with current drawnNumbers
+                        playerPages.add(page);
+                    }
+                }
+            }
+
+            players.add(new RoomPlayer(
+                    obj.getString("playerId"),
+                    obj.getString("name"),
+                    obj.optBoolean("isHost", false),
+                    obj.optBoolean("isBot", false),
+                    obj.optBoolean("isConnected", true),
+                    obj.optInt("pageCount", 0),
+                    obj.optLong("balance", 0),
+                    playerPages));
+        }
+        return players;
+    }
+
+    /** Parses a JSON array of transaction objects into TxRecord list. */
+    private List<WalletInfo.TxRecord> parseTxArray(JSONArray arr) {
+        List<WalletInfo.TxRecord> list = new ArrayList<>();
+        if (arr == null) return list;
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject t = arr.getJSONObject(i);
+            list.add(new WalletInfo.TxRecord(
+                    t.optLong("timestamp", 0),
+                    t.optString("type", ""),
+                    t.optLong("amount", 0),
+                    t.optLong("balanceAfter", 0),
+                    t.optString("note", "")));
+        }
+        return list;
     }
 
     private ClientPage parseClientPage(JSONObject obj) {

@@ -476,23 +476,24 @@ public class Main {
 
         @Override public void onReconnected(String gameState, List<RoomPlayer> players,
                                             List<Integer> drawnNumbers, long balance) {
-            System.out.println("╔══════════════════════════════════════════╗");
-            System.out.printf ("║  ↩  RECONNECTED  —  state: %-14s║%n", gameState);
-            System.out.printf ("║  Số đã quay: %-4d  Tờ: %-17d║%n",
-                    drawnNumbers.size(), client.getPages().size());
-            System.out.println("╚══════════════════════════════════════════╝");
+            System.out.println("[<] Da ket noi lai (RECONNECT)");
+            System.out.printf("    State      : %s%n", gameState);
+            System.out.printf("    So da quay : %d / 90%n", drawnNumbers.size());
+            System.out.printf("    To hien co : %d%n", client.getPages().size());
+            System.out.printf("    So du      : %,dd%n", balance);
+            System.out.println("    +------ Token reconnect ------+");
+            System.out.printf( "    | --token %-20s|%n", client.getToken());
+            System.out.println("    +-----------------------------+");
             if (!players.isEmpty()) {
-                System.out.println("[R] Room snapshot:");
-                for (RoomPlayer p : players)
-                    System.out.printf("    %-8s %-12s %s tờ=%-2d balance=%,d%n",
-                            p.playerId, p.name, p.isConnected ? "●" : "○", p.pageCount, p.balance);
+                System.out.printf("    Phong: %d nguoi%n", players.size());
+                for (RoomPlayer rp : players)
+                    System.out.printf("      [%s] %-12s to=%-2d balance=%,d%n",
+                            rp.isConnected ? "O" : "X", rp.name, rp.pageCount, rp.balance);
             }
-            // Re-auth admin if token is set
             if (pendingAdminToken != null) {
                 client.adminAuth(pendingAdminToken);
             }
         }
-
         @Override public void onAdminAuthOk() {
             System.out.println("[⚙] Admin authenticated ✓ — host-only commands active");
         }

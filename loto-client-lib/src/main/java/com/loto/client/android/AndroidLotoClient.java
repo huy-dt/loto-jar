@@ -130,6 +130,7 @@ public class AndroidLotoClient {
 
     public com.loto.client.core.ClientState getState()           { return client.getState(); }
     public String           getPlayerId()                        { return client.getPlayerId(); }
+    public String           getToken()                           { return client.getToken(); }
     public String           getPlayerName()                      { return client.getPlayerName(); }
     public boolean          isHost()                             { return client.isHost(); }
     public boolean          isAdmin()                            { return client.isAdmin(); }
@@ -145,6 +146,7 @@ public class AndroidLotoClient {
     public List<ClientPage> getPages()                           { return client.getPages(); }
     public List<Integer>    getDrawnNumbers()                    { return client.getDrawnNumbers(); }
     public WalletInfo       getWallet()                          { return client.getWallet(); }
+    public long             getJackpot()                         { return client.getJackpot(); }
 
     // ── Dispatching callback ──────────────────────────────────────
 

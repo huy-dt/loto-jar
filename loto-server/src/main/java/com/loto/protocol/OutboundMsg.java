@@ -75,7 +75,38 @@ public class OutboundMsg {
     /**
      * Full-state WELCOME — sent on both JOIN and RECONNECT.
      * Contains everything the client needs to render immediately:
-     * identity, pages, room snapshot, game state, wallet.
+     *
+     * <pre>
+     * {
+     *   type: "WELCOME",
+     *   payload: {
+     *     playerId, token, isHost,
+     *
+     *     // Player's own pages
+     *     pages: [ { id, grid } ],
+     *
+     *     // Player's own wallet (private)
+     *     playerInfo: {
+     *       playerId, name, balance,
+     *       transactions: [ { timestamp, type, amount, balanceAfter, note } ]
+     *     },
+     *
+     *     // Full room snapshot
+     *     roomInfo: {
+     *       status,           // "WAITING" | "VOTING" | "PLAYING" | "PAUSED" | "ENDED"
+     *       isPaused,
+     *       jackpot,
+     *       bet,              // alias for pricePerPage (client-friendly name)
+     *       pricePerPage,     // kept for backward compat
+     *       drawIntervalMs,
+     *       drawnNumbers,
+     *       voteCount,
+     *       voteNeeded,
+     *       players: [ { playerId, name, isHost, isBot, isConnected, pageCount, balance } ]
+     *     }
+     *   }
+     * }
+     * </pre>
      */
     public static OutboundMsg welcome(String playerId, String token, boolean isHost,
                                       List<LotoPage> pages,
@@ -88,27 +119,20 @@ public class OutboundMsg {
                                       int drawIntervalMs,
                                       long pricePerPage,
                                       long balance,
-                                      List<Transaction> transactions) {
+                                      List<Transaction> transactions,
+                                      long jackpot) {
         JSONObject p = new JSONObject();
-        p.put("playerId",      playerId);
-        p.put("token",         token);
-        p.put("isHost",        isHost);
-        p.put("pages",         pagesToJson(pages));
+        p.put("playerId", playerId);
+        p.put("token",    token);
+        p.put("isHost",   isHost);
 
-        // Room snapshot
-        JSONArray playersArr = new JSONArray();
-        for (PlayerInfo info : players) playersArr.put(info.toJson());
-        p.put("players",       playersArr);
-        p.put("gameState",     gameState);
-        p.put("isPaused",      isPaused);
-        p.put("drawnNumbers",  new JSONArray(drawnNumbers));
-        p.put("voteCount",     voteCount);
-        p.put("voteNeeded",    voteNeeded);
-        p.put("drawIntervalMs", drawIntervalMs);
-        p.put("pricePerPage",  pricePerPage);
+        // ── Player's own pages ────────────────────────────────────
+        p.put("pages", pagesToJson(pages));
 
-        // Wallet — inline so client has balance on first frame, no extra round-trip
-        p.put("balance", balance);
+        // ── playerInfo — private wallet snapshot ──────────────────
+        JSONObject playerInfo = new JSONObject();
+        playerInfo.put("playerId", playerId);
+        playerInfo.put("balance",  balance);
         JSONArray txArr = new JSONArray();
         if (transactions != null) {
             for (Transaction tx : transactions) {
@@ -121,9 +145,50 @@ public class OutboundMsg {
                 txArr.put(t);
             }
         }
-        p.put("transactions", txArr);
+        playerInfo.put("transactions", txArr);
+        p.put("playerInfo", playerInfo);
+
+        // ── roomInfo — full room snapshot ─────────────────────────
+        JSONObject roomInfo = new JSONObject();
+        roomInfo.put("status",        gameState);          // e.g. "WAITING", "PLAYING"
+        roomInfo.put("isPaused",      isPaused);
+        roomInfo.put("jackpot",       jackpot);
+        roomInfo.put("bet",           pricePerPage);       // client-friendly alias
+        roomInfo.put("pricePerPage",  pricePerPage);       // backward compat
+        roomInfo.put("drawIntervalMs", drawIntervalMs);
+        roomInfo.put("drawnNumbers",  new JSONArray(drawnNumbers));
+        roomInfo.put("voteCount",     voteCount);
+        roomInfo.put("voteNeeded",    voteNeeded);
+
+        JSONArray playersArr = new JSONArray();
+        for (PlayerInfo info : players) playersArr.put(info.toJson());
+        roomInfo.put("players", playersArr);
+
+        p.put("roomInfo", roomInfo);
 
         return new OutboundMsg(MsgType.WELCOME, p);
+    }
+
+    /**
+     * Backward-compatible overload (no jackpot) — delegates with jackpot=0.
+     * @deprecated Prefer the overload that includes jackpot.
+     */
+    @Deprecated
+    public static OutboundMsg welcome(String playerId, String token, boolean isHost,
+                                      List<LotoPage> pages,
+                                      List<PlayerInfo> players,
+                                      String gameState,
+                                      boolean isPaused,
+                                      List<Integer> drawnNumbers,
+                                      int voteCount,
+                                      int voteNeeded,
+                                      int drawIntervalMs,
+                                      long pricePerPage,
+                                      long balance,
+                                      List<Transaction> transactions) {
+        return welcome(playerId, token, isHost, pages, players, gameState, isPaused,
+                       drawnNumbers, voteCount, voteNeeded, drawIntervalMs,
+                       pricePerPage, balance, transactions, 0L);
     }
 
     public static OutboundMsg playerJoined(String playerId, String name, boolean isHost) {
