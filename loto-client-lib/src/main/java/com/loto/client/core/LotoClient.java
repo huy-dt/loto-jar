@@ -118,9 +118,10 @@ public class LotoClient {
                 setState(ClientState.CONNECTED);
                 if (callback != null) callback.onConnected();
 
-                // JOIN or RECONNECT depending on whether we have a token
+                // Always use JOIN — include token for reconnect, omit for fresh join.
+                // RECONNECT is legacy; server handles both via JOIN.
                 if (token != null) {
-                    conn.send(ClientMsgBuilder.reconnect(token));
+                    conn.send(ClientMsgBuilder.joinWithToken(playerName, token, roomId));
                 } else {
                     conn.send(roomId != null
                             ? ClientMsgBuilder.join(playerName, roomId)
@@ -294,10 +295,7 @@ public class LotoClient {
                     if (callback != null) callback.onDrawIntervalChanged(currentDrawIntervalMs);
                     break;
                 case "PRICE_PER_PAGE_CHANGED":
-                    // Server field is "pricePerPage" — fall back to "price" for compatibility
-                    currentPricePerPage = payload.optLong("pricePerPage",
-                                         payload.optLong("price", currentPricePerPage));
-                    pendingPricePerPage = payload.optLong("pendingPrice", -1);
+                    currentPricePerPage = payload.optLong("pricePerPage", currentPricePerPage);
                     if (callback != null) callback.onPricePerPageChanged(currentPricePerPage);
                     break;
                 case "AUTO_RESET_SCHEDULED":
@@ -340,15 +338,17 @@ public class LotoClient {
                     break;
                 case "GAME_ENDED":
                     currentGameState = "ENDED";
-                    if (callback != null)
-                        callback.onGameEnded(
-                                payload.optString("winnerPlayerId", ""),
-                                payload.optString("winnerName", ""));
-                    break;
-                case "GAME_ENDED_BY_SERVER":
-                    currentGameState = "ENDED";
-                    if (callback != null)
-                        callback.onGameEndedByServer(payload.optString("reason", ""));
+                    setState(ClientState.IN_GAME);
+                    String winnerId   = payload.optString("winnerPlayerId", "");
+                    String winnerName = payload.optString("winnerName", "");
+                    String endReason  = payload.optString("reason", "");
+                    if (!winnerId.isEmpty()) {
+                        // WIN_CONFIRMED triggered game end
+                        if (callback != null) callback.onGameEnded(winnerId, winnerName);
+                    } else {
+                        // Server ended without winner (all 90 drawn, SERVER_END)
+                        if (callback != null) callback.onGameEndedByServer(endReason);
+                    }
                     break;
                 case "ROOM_RESET":        handleRoomReset(payload);     break;
                 case "GAME_CANCELLED":
@@ -449,10 +449,10 @@ public class LotoClient {
     private void handleRoomUpdate(JSONObject p) {
         List<RoomPlayer> players = parsePlayers(p.optJSONArray("players"));
 
-        if (p.has("pricePerPage"))        currentPricePerPage     = p.getLong("pricePerPage");
-        if (p.has("pendingPricePerPage")) pendingPricePerPage    = p.getLong("pendingPricePerPage");
-        if (p.has("autoResetDelayMs"))    currentAutoResetDelayMs = p.getInt("autoResetDelayMs");
-        if (p.has("autoStartDelayMs"))    currentAutoStartDelayMs = p.getInt("autoStartDelayMs");
+        if (p.has("pricePerPage"))       currentPricePerPage     = p.getLong("pricePerPage");
+        // Server sends autoResetDelaySec (seconds), convert to ms
+        if (p.has("autoResetDelaySec"))  currentAutoResetDelayMs = p.getInt("autoResetDelaySec") * 1000;
+        // autoStartDelayMs not included in ROOM_UPDATE — delivered via AUTO_START_SCHEDULED
 
         currentGameState = p.optString("gameState", currentGameState);
 
@@ -477,11 +477,11 @@ public class LotoClient {
     }
 
     private void handleNumberDrawn(JSONObject p) {
-        int       number   = p.getInt("number");
-        JSONArray drawnArr = p.getJSONArray("drawnList");
+        int number = p.getInt("number");
 
-        drawnNumbers.clear();
-        for (int i = 0; i < drawnArr.length(); i++) drawnNumbers.add(drawnArr.getInt(i));
+        // Server only emits the new number — client appends to its local list.
+        // Full drawnNumbers list is delivered via WELCOME on (re)connect.
+        if (!drawnNumbers.contains(number)) drawnNumbers.add(number);
 
         List<ClientPage> markedPages = new ArrayList<>();
         List<ClientPage> wonPages    = new ArrayList<>();

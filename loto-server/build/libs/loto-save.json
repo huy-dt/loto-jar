@@ -1,5 +1,5 @@
 {
-  "jackpot": 3000,
+  "jackpot": 7000,
   "pricePerPage": 1000,
   "players": [
     {
@@ -50,6 +50,454 @@
       "id": "7c162be5",
       "transactions": [],
       "token": "9581dc62-dfc9-4f06-951d-d0350a57faac"
+    },
+    {
+      "isHost": false,
+      "pages": [
+        {
+          "grid": [
+            [
+              9,
+              12,
+              null,
+              null,
+              45,
+              null,
+              68,
+              73,
+              null
+            ],
+            [
+              1,
+              null,
+              20,
+              39,
+              null,
+              null,
+              null,
+              76,
+              82
+            ],
+            [
+              8,
+              null,
+              null,
+              null,
+              null,
+              51,
+              67,
+              71,
+              84
+            ],
+            [
+              4,
+              14,
+              null,
+              33,
+              null,
+              null,
+              null,
+              70,
+              86
+            ],
+            [
+              null,
+              17,
+              null,
+              31,
+              null,
+              50,
+              null,
+              72,
+              83
+            ],
+            [
+              2,
+              16,
+              22,
+              null,
+              48,
+              null,
+              60,
+              null,
+              null
+            ],
+            [
+              null,
+              19,
+              null,
+              null,
+              42,
+              null,
+              65,
+              74,
+              81
+            ],
+            [
+              null,
+              null,
+              23,
+              38,
+              43,
+              56,
+              null,
+              78,
+              null
+            ],
+            [
+              null,
+              11,
+              null,
+              30,
+              40,
+              null,
+              62,
+              null,
+              87
+            ]
+          ],
+          "id": 6
+        },
+        {
+          "grid": [
+            [
+              3,
+              19,
+              null,
+              null,
+              45,
+              null,
+              60,
+              null,
+              81
+            ],
+            [
+              7,
+              null,
+              23,
+              38,
+              42,
+              null,
+              null,
+              75,
+              null
+            ],
+            [
+              2,
+              null,
+              29,
+              null,
+              44,
+              null,
+              null,
+              73,
+              80
+            ],
+            [
+              null,
+              null,
+              null,
+              33,
+              47,
+              59,
+              63,
+              79,
+              null
+            ],
+            [
+              null,
+              15,
+              27,
+              null,
+              null,
+              52,
+              69,
+              null,
+              82
+            ],
+            [
+              null,
+              13,
+              22,
+              35,
+              46,
+              53,
+              null,
+              null,
+              null
+            ],
+            [
+              null,
+              16,
+              26,
+              36,
+              null,
+              null,
+              null,
+              70,
+              86
+            ],
+            [
+              null,
+              11,
+              21,
+              34,
+              48,
+              null,
+              null,
+              null,
+              90
+            ],
+            [
+              6,
+              14,
+              25,
+              null,
+              49,
+              null,
+              null,
+              null,
+              87
+            ]
+          ],
+          "id": 7
+        }
+      ],
+      "balance": 9997999,
+      "name": "admin",
+      "id": "4a8698d0",
+      "transactions": [{
+        "note": "Mua 2 tờ × 1000",
+        "amount": -2000,
+        "balanceAfter": 9997999,
+        "type": "BUY_PAGE",
+        "timestamp": 1772935341871
+      }],
+      "token": "47c69ac2-ba45-45e7-93a0-0131f002ceb6"
+    },
+    {
+      "isHost": false,
+      "pages": [
+        {
+          "grid": [
+            [
+              2,
+              19,
+              27,
+              null,
+              null,
+              null,
+              null,
+              79,
+              83
+            ],
+            [
+              1,
+              null,
+              null,
+              null,
+              45,
+              53,
+              null,
+              78,
+              82
+            ],
+            [
+              null,
+              17,
+              28,
+              null,
+              null,
+              59,
+              null,
+              77,
+              81
+            ],
+            [
+              null,
+              16,
+              22,
+              null,
+              40,
+              55,
+              null,
+              null,
+              85
+            ],
+            [
+              null,
+              null,
+              20,
+              32,
+              null,
+              54,
+              null,
+              73,
+              86
+            ],
+            [
+              null,
+              null,
+              25,
+              36,
+              47,
+              null,
+              null,
+              70,
+              90
+            ],
+            [
+              null,
+              14,
+              29,
+              31,
+              49,
+              56,
+              null,
+              null,
+              null
+            ],
+            [
+              4,
+              13,
+              21,
+              null,
+              46,
+              null,
+              null,
+              71,
+              null
+            ],
+            [
+              5,
+              null,
+              24,
+              null,
+              null,
+              51,
+              65,
+              75,
+              null
+            ]
+          ],
+          "id": 4
+        },
+        {
+          "grid": [
+            [
+              6,
+              17,
+              29,
+              null,
+              49,
+              null,
+              null,
+              null,
+              87
+            ],
+            [
+              3,
+              18,
+              null,
+              null,
+              null,
+              59,
+              66,
+              null,
+              90
+            ],
+            [
+              2,
+              null,
+              24,
+              38,
+              null,
+              54,
+              null,
+              79,
+              null
+            ],
+            [
+              5,
+              13,
+              21,
+              null,
+              46,
+              null,
+              69,
+              null,
+              null
+            ],
+            [
+              1,
+              null,
+              27,
+              null,
+              null,
+              55,
+              null,
+              73,
+              84
+            ],
+            [
+              null,
+              15,
+              26,
+              null,
+              null,
+              null,
+              67,
+              71,
+              83
+            ],
+            [
+              null,
+              null,
+              23,
+              30,
+              44,
+              56,
+              63,
+              null,
+              null
+            ],
+            [
+              null,
+              null,
+              null,
+              33,
+              40,
+              null,
+              60,
+              78,
+              82
+            ],
+            [
+              9,
+              11,
+              null,
+              null,
+              null,
+              null,
+              68,
+              74,
+              81
+            ]
+          ],
+          "id": 5
+        }
+      ],
+      "balance": 997999,
+      "name": "huy",
+      "id": "c891dce9",
+      "transactions": [{
+        "note": "Bot mua 2 tờ × 1,000",
+        "amount": -2000,
+        "balanceAfter": 997999,
+        "type": "BUY_PAGE",
+        "timestamp": 1772897197720
+      }],
+      "token": "fd0bd3d4-f00e-4036-910a-6d0cbc112847"
     },
     {
       "isHost": false,
@@ -418,6 +866,15 @@
     {
       "isHost": false,
       "pages": [],
+      "balance": 9999999,
+      "name": "admin",
+      "id": "62fae926",
+      "transactions": [],
+      "token": "4daf250c-a5ca-45d1-953f-8972f0fb7614"
+    },
+    {
+      "isHost": false,
+      "pages": [],
       "balance": 9995499,
       "name": "admin",
       "id": "d1a78fb2",
@@ -449,10 +906,27 @@
   ],
   "winnerIds": [],
   "drawIntervalMs": 1000,
-  "savedAt": 1772892048098,
-  "gameState": "WAITING",
-  "drawnNumbers": [],
+  "savedAt": 1772935534726,
+  "gameState": "PAUSED",
+  "drawnNumbers": [
+    52,
+    56,
+    50,
+    54,
+    60,
+    26,
+    24,
+    64,
+    20,
+    16,
+    42,
+    38,
+    39,
+    37,
+    36,
+    84
+  ],
   "autoResetDelayMs": 5000,
-  "roomId": "d6de55bd-56d4-4fa7-89af-f03686342532",
+  "roomId": "d292d3a5-8edc-430e-ba74-d96c73396a0d",
   "bannedIds": []
 }

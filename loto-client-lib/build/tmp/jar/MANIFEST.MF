@@ -1,5 +1,5 @@
 Manifest-Version: 1.0
 Main-Class: com.loto.client.Main
 Implementation-Title: Loto Client
-Implementation-Version: 3.0.0
+Implementation-Version: 3.0.1
 

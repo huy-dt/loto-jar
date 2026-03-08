@@ -20,6 +20,18 @@ public class ClientMsgBuilder {
         return msg("JOIN", p);
     }
 
+    /**
+     * JOIN with token for reconnect — preferred over legacy RECONNECT message.
+     * Server tries reconnect first; falls back to fresh join if token unrecognised.
+     */
+    public static String joinWithToken(String name, String token, String roomId) {
+        JSONObject p = new JSONObject().put("name", name).put("token", token);
+        if (roomId != null) p.put("roomId", roomId);
+        return msg("JOIN", p);
+    }
+
+    /** @deprecated Use {@link #joinWithToken} — server prefers JOIN with token. */
+    @Deprecated
     public static String reconnect(String token) {
         return msg("RECONNECT", new JSONObject().put("token", token));
     }
